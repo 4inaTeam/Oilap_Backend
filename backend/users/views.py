@@ -22,7 +22,8 @@ class UserCreateView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        print(f"User role: {request.user.role}")  # Debugging
+        print(f"User role: {request.user.role}")
+        print(f"User is authenticated: {request.user.is_authenticated}")
         return super().post(request, *args, **kwargs)
 
 
