@@ -1,4 +1,3 @@
-
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -20,7 +19,8 @@ urlpatterns = [
         path('login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
         path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     ])),
-     path('api/', include('users.urls')),
-     path('api/auth/password/reset/', include('django_rest_passwordreset.urls')),
-     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
+    path('api/', include('users.urls')),  # Include users app URLs
+    path('api/', include('products.urls')),  # Include products app URLs
+    path('api/auth/password/reset/', include('django_rest_passwordreset.urls')),
+    path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
 ]

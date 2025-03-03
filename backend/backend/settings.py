@@ -43,6 +43,8 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'django_rest_passwordreset',
     'drf_yasg',
+    'products',
+    'clients',
 ]
 
 REST_FRAMEWORK = {
