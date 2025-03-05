@@ -1,13 +1,14 @@
-# products/serializers.py
 from rest_framework import serializers
 from .models import Product
-from clients.models import Client  # Import Client from the clients app
+from clients.models import Client
 
 class ProductSerializer(serializers.ModelSerializer):
+    status = serializers.ChoiceField(choices=Product.STATUS_CHOICES, required=False)
+
     class Meta:
         model = Product
-        fields = ['id', 'name', 'quality', 'price', 'client', 'created_by', 'created_at']
-        
+        fields = ['id', 'name', 'quality', 'origine', 'price', 'client', 'created_by', 'created_at', 'status']
+
 class ProductWithClientSerializer(serializers.Serializer):
     # Fields for the client
     client_name = serializers.CharField(max_length=100)
@@ -18,6 +19,8 @@ class ProductWithClientSerializer(serializers.Serializer):
     product_name = serializers.CharField(max_length=100)
     product_quality = serializers.CharField(required=False, allow_blank=True)
     product_price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    product_origine = serializers.CharField(required=False, allow_blank=True)
+    status = serializers.ChoiceField(choices=Product.STATUS_CHOICES, required=False, default='pending')
 
     def create(self, validated_data):
         # Get the employee (created_by)
@@ -37,10 +40,12 @@ class ProductWithClientSerializer(serializers.Serializer):
         # Create the product
         product = Product.objects.create(
             name=validated_data['product_name'],
-            quality=validated_data.get('product_quality', ''),  # <-- Fixed here
+            quality=validated_data.get('product_quality', ''),
             price=validated_data['product_price'],
+            origine=validated_data.get('product_origine', ''),
             client=client,
             created_by=employee,
+            status=validated_data.get('status', 'pending'),
         )
 
         return product

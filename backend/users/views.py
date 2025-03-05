@@ -36,7 +36,6 @@ class ClientCreateView(generics.CreateAPIView):
         serializer.save(role='CLIENT')
 
 class UserListView(APIView):
-    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         users = CustomUser.objects.all()
@@ -48,3 +47,10 @@ class AdminOnlyView(APIView):
 
     def get(self, request):
         return Response({"message": "This is an admin-only endpoint."})
+
+class CurrentUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = CustomUserSerializer(request.user)
+        return Response(serializer.data)
