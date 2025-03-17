@@ -11,3 +11,7 @@ class IsEmployee(BasePermission):
 class IsClient(BasePermission):
     def has_permission(self, request, view):
         return request.user.role == 'CLIENT'
+
+class IsAccountant(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.role == 'ACCOUNTANT'

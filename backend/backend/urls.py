@@ -21,6 +21,7 @@ urlpatterns = [
     ])),
     path('api/', include('users.urls')),
     path('api/', include('products.urls')),
+    path('api/', include('factures.urls')),
     path('api/auth/password/reset/', include('django_rest_passwordreset.urls')),
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
 ]

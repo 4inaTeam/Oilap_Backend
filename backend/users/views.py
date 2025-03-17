@@ -1,10 +1,9 @@
 from rest_framework import generics, permissions
-from .models import CustomUser
 from .serializers import CustomUserSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from .models import CustomUser
+from .models import CustomUser, Client
 from .permissions import IsAdmin
 
 
@@ -15,6 +14,10 @@ class IsAdmin(permissions.BasePermission):
 class IsEmployee(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.role == 'EMPLOYEE'
+
+class IsAdminOrEmployee(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.role in ['ADMIN', 'EMPLOYEE']
 
 class UserCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
@@ -30,11 +33,18 @@ class UserCreateView(generics.CreateAPIView):
 class ClientCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = CustomUserSerializer
-    permission_classes = [IsAuthenticated, IsEmployee]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def perform_create(self, serializer):
-        serializer.save(role='CLIENT')
-
+        # Create CustomUser with CLIENT role
+        custom_user = serializer.save(role='CLIENT')
+        
+        # Create Client profile
+        Client.objects.create(
+            custom_user=custom_user,
+            created_by=self.request.user
+        )
+        
 class UserListView(APIView):
 
     def get(self, request):

@@ -1,17 +1,14 @@
 from rest_framework import generics, permissions
 from .models import Product
-from .serializers import ProductWithClientSerializer, ProductSerializer
+from .serializers import  ProductSerializer
 from users.permissions import IsEmployee, IsAdmin, IsClient
 from rest_framework.exceptions import ValidationError
 
 class ProductCreateView(generics.CreateAPIView):
     queryset = Product.objects.all()
-    serializer_class = ProductWithClientSerializer
+    serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticated, IsEmployee]
 
-    def perform_create(self, serializer):
-        # Pass the request user (employee) to the serializer
-        serializer.save(created_by=self.request.user)
 
 class ProductRetrieveView(generics.RetrieveAPIView):
     queryset = Product.objects.all()
@@ -55,15 +52,16 @@ class ProductDeleteView(generics.DestroyAPIView):
 
 class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
-    permission_class = [permissions.IsAuthenticated, IsEmployee | IsAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsEmployee | IsAdmin]  # Fix typo
 
     def get_queryset(self):
-        return Product.objects.all();
+        return Product.objects.all()
+
 
 class ClientProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
-    permission_class = [permissions.IsAuthenticated, IsClient]
+    permission_classes = [permissions.IsAuthenticated, IsClient]
 
     def get_queryset(self):
-        return Product.object.filter(client=self.request.user);
+        return Product.objects.filter(client__custom_user=self.request.user)
 

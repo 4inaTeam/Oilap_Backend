@@ -44,8 +44,7 @@ INSTALLED_APPS = [
     'django_rest_passwordreset',
     'drf_yasg',
     'products',
-    'clients',
-    'factures'
+    'factures',
 
 ]
 
