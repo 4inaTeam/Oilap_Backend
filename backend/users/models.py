@@ -9,7 +9,11 @@ class CustomUser(AbstractUser):
         ('CLIENT', 'Client'),
     ]
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='CLIENT')
-
+    profile_photo = models.ImageField(
+        upload_to='profile_photos/',
+        default='profile_photos/default.png'
+    )
+    isActive = models.BooleanField(default=True)
 class Client(models.Model):
     custom_user = models.OneToOneField(
         CustomUser,

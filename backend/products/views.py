@@ -4,6 +4,12 @@ from .serializers import  ProductSerializer
 from users.permissions import IsEmployee, IsAdmin, IsClient
 from rest_framework.exceptions import ValidationError
 
+
+class IsAdminOrEmployee(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.role in ['ADMIN', 'EMPLOYEE']
+
+
 class ProductCreateView(generics.CreateAPIView):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer

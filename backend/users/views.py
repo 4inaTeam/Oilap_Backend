@@ -1,10 +1,12 @@
 from rest_framework import generics, permissions
-from .serializers import CustomUserSerializer
+from .serializers import CustomUserSerializer, UserProfileSerializer, AdminUserCreateSerializer, UserActiveStatusSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .models import CustomUser, Client
 from .permissions import IsAdmin
+from rest_framework.exceptions import ValidationError 
+from rest_framework import generics 
 
 
 class IsAdmin(permissions.BasePermission):
@@ -21,7 +23,7 @@ class IsAdminOrEmployee(permissions.BasePermission):
 
 class UserCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
-    serializer_class = CustomUserSerializer
+    serializer_class = AdminUserCreateSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request, *args, **kwargs):
@@ -29,27 +31,29 @@ class UserCreateView(generics.CreateAPIView):
         print(f"User is authenticated: {request.user.is_authenticated}")
         return super().post(request, *args, **kwargs)
 
-
 class ClientCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = CustomUserSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def perform_create(self, serializer):
-        # Create CustomUser with CLIENT role
         custom_user = serializer.save(role='CLIENT')
-        
-        # Create Client profile
+
+        if hasattr(custom_user, 'client_profile'):
+            raise ValidationError({"error": "Client profile already exists for this user."})
+
         Client.objects.create(
             custom_user=custom_user,
-            created_by=self.request.user
+            created_by=self.request.user,
+            cin=self.request.data.get('cin', None)
         )
-        
+
+
 class UserListView(APIView):
 
     def get(self, request):
         users = CustomUser.objects.all()
-        data = [{"username": user.username, "role": user.role} for user in users]
+        data = [{"username": user.username, "role": user.role, "isActive": user.isActive} for user in users]
         return Response(data)
 
 class AdminOnlyView(APIView):
@@ -63,4 +67,43 @@ class CurrentUserView(APIView):
 
     def get(self, request):
         serializer = CustomUserSerializer(request.user)
+        return Response(serializer.data)
+
+class SearchClientByCIN(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrEmployee]
+
+    def get(self, request, cin):
+        try:
+            client = Client.objects.get(cin=cin)
+            user_serializer = CustomUserSerializer(client.custom_user)
+            return Response({
+                "cin": client.cin,
+                "user": user_serializer.data
+            })
+        except Client.DoesNotExist:
+            return Response({"message": "Client not found."}, status=404)
+
+class UserProfileView(generics.RetrieveUpdateAPIView):
+    serializer_class = UserProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
+
+    def perform_update(self, serializer):
+        serializer.save(role=self.request.user.role)
+
+class UserDeactivateView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def patch(self, request, user_id):
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=404)
+
+        user.isActive = False
+        user.save()
+
+        serializer = UserActiveStatusSerializer(user)
         return Response(serializer.data)

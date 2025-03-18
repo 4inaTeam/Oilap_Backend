@@ -14,6 +14,12 @@ class Product(models.Model):
     origine = models.TextField(blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity = models.PositiveIntegerField(default=1)
+    photo = models.ImageField(
+        upload_to='products/',
+        blank=True,
+        null=True,
+        default='products/default.jpg'
+    )
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='products')
     created_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='products')
     created_at = models.DateTimeField(auto_now_add=True)
