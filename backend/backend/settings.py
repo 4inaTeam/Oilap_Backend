@@ -45,8 +45,7 @@ INSTALLED_APPS = [
     'django_rest_passwordreset',
     'drf_yasg',
     'products',
-    'factures',
-
+    'factures'
 ]
 
 REST_FRAMEWORK = {
