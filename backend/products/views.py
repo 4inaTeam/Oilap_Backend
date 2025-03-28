@@ -38,7 +38,6 @@ class ProductUpdateView(generics.UpdateAPIView):
             if new_status != 'done':
                 raise ValidationError("Cannot update product information when status is 'doing'. Only status can be updated to 'done'.")
 
-        # Create a copy and modify it
             validated_data_copy = serializer.validated_data.copy()
             for field in list(validated_data_copy.keys()):
                 if field != 'status':
@@ -55,10 +54,16 @@ class ProductDeleteView(generics.DestroyAPIView):
     serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticated, IsEmployee]
 
+    def perform_destroy(self, instance):
+        if instance.status in ['doing', 'done']:
+            raise ValidationError("You cannot delete a product with status 'doing' or 'done'.")
+        super().perform_destroy(instance)
+
+
 
 class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated, IsEmployee | IsAdmin]  # Fix typo
+    permission_classes = [permissions.IsAuthenticated, IsEmployee | IsAdmin]
 
     def get_queryset(self):
         return Product.objects.all()
