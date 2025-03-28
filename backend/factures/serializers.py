@@ -14,7 +14,8 @@ class FactureSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'product', 'client', 'employee', 'accountant',
             'base_amount', 'tax_amount', 'total_amount',
-            'issue_date', 'due_date', 'status', 'payment_date'
+            'issue_date', 'due_date', 'status', 'payment_date',
+            'qr_code','payment_uuid', 'qr_verified', 'created_at'
         ]
         read_only_fields = [
             'base_amount', 'tax_amount', 'total_amount',
@@ -28,3 +29,16 @@ class FactureStatusSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'payment_date': {'read_only': True}
         }
+
+class QRCodeValidationSerializer(serializers.Serializer):
+    qr_data = serializers.JSONField()
+    
+    def validate_qr_data(self, value):
+        required_fields = ['facture_id', 'uuid', 'amount', 'currency']
+        if not all(field in value for field in required_fields):
+            raise serializers.ValidationError("QR code invalide")
+        return value
+
+class QRCodePaymentSerializer(serializers.Serializer):
+    facture_id = serializers.IntegerField()
+    payment_uuid = serializers.UUIDField()

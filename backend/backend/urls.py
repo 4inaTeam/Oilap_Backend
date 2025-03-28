@@ -10,7 +10,7 @@ schema_view = get_schema_view(
     openapi.Info(
         title="Ollap API",
         default_version='v1',
-        description="API pour la gestion des utilisateurs",
+        description="API pour l'applications OLLAP",
     ),
     public=True,
 )

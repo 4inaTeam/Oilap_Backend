@@ -1,7 +1,8 @@
 import io
+import stripe
 from rest_framework import generics, permissions
 from .models import Facture
-from .serializers import FactureSerializer, FactureStatusSerializer
+from .serializers import FactureSerializer, FactureStatusSerializer, QRCodeValidationSerializer, QRCodePaymentSerializer
 from users.permissions import IsAdmin, IsAccountant, IsEmployee, IsClient
 from django.http import HttpResponse
 from django.utils import timezone
@@ -11,7 +12,9 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from .models import Facture
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-
+from decimal import Decimal
+from rest_framework.response import Response
+from rest_framework import status
 
 class FacturePDFView(APIView):
     permission_classes = [IsAuthenticated]
@@ -42,21 +45,17 @@ class FacturePDFView(APIView):
         p.setFont("Helvetica", 12)
         y -= line_height * 2
 
-        # Facture ID
         p.drawString(50, y, f"Facture ID: {facture.id}")
         y -= line_height
 
-        # Product information (assuming product has a 'name' attribute)
         product_info = facture.product.name if facture.product else "N/A"
         p.drawString(50, y, f"Product: {product_info}")
         y -= line_height
 
-        # Client information (assuming client has a 'name' attribute, adjust if needed)
-        client_info = facture.client.name if hasattr(facture.client, 'name') else f"ID {facture.client.id}"
+        client_info = facture.client.username if hasattr(facture.client, 'username') else f"ID {facture.client.cin}"
         p.drawString(50, y, f"Client: {client_info}")
         y -= line_height
 
-        # Employee information (assuming employee has a 'username' attribute)
         employee_info = facture.employee.username if facture.employee else "N/A"
         p.drawString(50, y, f"Employee: {employee_info}")
         y -= line_height
@@ -132,3 +131,66 @@ class FactureStatusView(generics.UpdateAPIView):
         
         # TODO: Add status change notification
         # send_status_notification(instance, new_status)
+
+class QRCodeValidationView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAccountant]
+    
+    def post(self, request):
+        serializer = QRCodeValidationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        qr_data = serializer.validated_data['qr_data']
+        
+        try:
+            facture = Facture.objects.get(
+                id=qr_data['facture_id'],
+                payment_uuid=qr_data['uuid'],
+                total_amount=Decimal(qr_data['amount']),
+                qr_verified=False
+            )
+            return Response({
+                'facture_id': facture.id,
+                'client': facture.client.custom_user.get_full_name(),
+                'amount': facture.total_amount,
+                'status': 'valid'
+            }, status=status.HTTP_200_OK)
+            
+        except Facture.DoesNotExist:
+            return Response({'error': 'Facture non valide'}, status=400)
+
+class QRCodePaymentView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAccountant]
+    
+    def post(self, request):
+        serializer = QRCodePaymentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            facture = Facture.objects.get(
+                id=serializer.validated_data['facture_id'],
+                payment_uuid=serializer.validated_data['payment_uuid'],
+                qr_verified=False
+            )
+            
+            # Process payment
+            payment_intent = stripe.PaymentIntent.create(
+                amount=int(facture.total_amount * 100),
+                currency='eur',
+                payment_method_types=['card'],
+                metadata={
+                    'facture_id': facture.id,
+                    'payment_type': 'qr_code'
+                }
+            )
+            
+            # Update facture
+            facture.qr_verified = True
+            facture.save()
+            
+            return Response({
+                'client_secret': payment_intent.client_secret,
+                'payment_id': payment_intent.id
+            }, status=status.HTTP_200_OK)
+            
+        except Facture.DoesNotExist:
+            return Response({'error': 'Facture non valide'}, status=400)
