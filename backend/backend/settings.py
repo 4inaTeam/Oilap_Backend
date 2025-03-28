@@ -45,7 +45,8 @@ INSTALLED_APPS = [
     'django_rest_passwordreset',
     'drf_yasg',
     'products',
-    'factures'
+    'factures',
+    'payments',
 ]
 
 REST_FRAMEWORK = {
@@ -150,3 +151,6 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+STRIPE_PUBLIC_KEY = 'pk_test_51R7CAPGaWkUiZSZpWP8sUXLyKXt2K96b4zzesdNxh7ZOdB1K1hkhxvTAd00e8oxPtuUiUOo1SnQnGwEQi0GczjKK006OvqX3Dq'
+STRIPE_SECRET_KEY = 'sk_test_51R7CAPGaWkUiZSZp2WGq72BhUuwCNhMD84VuzIjiB8GUbE9EXr88Or93hiqFte6A4tax02H3up41SWVgWKHHO9F600Fwleyvdh'
+STRIPE_WEBHOOK_SECRET = 'whsec_5751c622ebec9b75225610e369f504143b7fe9bf725a4578b43cc3b922aedc0a'

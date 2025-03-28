@@ -11,7 +11,7 @@ class Facture(models.Model):
         ('paid', 'Paid'),
         ('overdue', 'Overdue'),
     ]
-
+    
     product = models.OneToOneField(
         Product,
         on_delete=models.CASCADE,
