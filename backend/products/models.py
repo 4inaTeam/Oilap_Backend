@@ -1,4 +1,3 @@
-# products/models.py
 from django.db import models
 from users.models import CustomUser, Client
 
@@ -7,6 +6,7 @@ class Product(models.Model):
         ('pending', 'Pending'),
         ('doing', 'Doing'),
         ('done', 'Done'),
+        ('canceled', 'Canceled'),
     ]
 
     name = models.CharField(max_length=100)

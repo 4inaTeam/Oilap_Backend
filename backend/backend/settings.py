@@ -60,8 +60,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'oussamachercheri0@gmail.com'
-EMAIL_HOST_PASSWORD = 'ssui rbyl qjpu ptmb'
+EMAIL_HOST_USER = 'oussema.chercheri01@gmail.com'
+EMAIL_HOST_PASSWORD = 'byzw mqgh xnia sruh'
 
 AUTH_USER_MODEL = 'users.CustomUser'
 
@@ -77,10 +77,11 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'backend.urls'
 
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],  # Correctly points to the templates directory
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -90,9 +91,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
             ],
         },
-        'DIRS': [os.path.join(BASE_DIR, 'templates')],
     },
-
 ]
 
 MEDIA_URL = '/media/'

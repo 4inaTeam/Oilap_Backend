@@ -6,6 +6,8 @@ from .views import (
     ProductDeleteView,
     ProductListView,
     ClientProductListView,  
+    SearchProductByStatus,
+    CancelProductView,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -17,4 +19,6 @@ urlpatterns = [
     path('<int:pk>/delete/', ProductDeleteView.as_view(), name='product-delete'),
     path('', ProductListView.as_view(), name='product-list'),
     path('client/products/', ClientProductListView.as_view(), name='client-product-list'),
+    path('search/<str:status>/', SearchProductByStatus.as_view(), name='search-product-by-status'),
+    path('cancel/<int:pk>/', CancelProductView.as_view(), name='cancel-product'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -3,6 +3,8 @@ from .models import Product
 from .serializers import  ProductSerializer
 from users.permissions import IsEmployee, IsAdmin, IsClient
 from rest_framework.exceptions import ValidationError
+from rest_framework.views import APIView
+from rest_framework.response import Response
 
 
 class IsAdminOrEmployee(permissions.BasePermission):
@@ -60,7 +62,6 @@ class ProductDeleteView(generics.DestroyAPIView):
         super().perform_destroy(instance)
 
 
-
 class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticated, IsEmployee | IsAdmin]
@@ -76,3 +77,32 @@ class ClientProductListView(generics.ListAPIView):
     def get_queryset(self):
         return Product.objects.filter(client__custom_user=self.request.user)
 
+class SearchProductByStatus(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, status):
+        try:
+            products = Product.objects.filter(status=status)
+            if not products.exists():
+                return Response({"message": "No products found with this status."}, status=404)
+
+            serializer = ProductSerializer(products, many=True)
+            return Response(serializer.data)
+        except Product.DoesNotExist:
+            return Response({"message": "Product not found."}, status=404)
+
+class CancelProductView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsEmployee | IsAdmin] 
+
+    def post(self, request, product_id):
+        try:
+            product = Product.objects.get(id=product_id)
+            if product.status == 'done':
+                return Response({"message": "Cannot cancel a product with status 'done'."}, status=400)
+
+            product.status = 'canceled'
+            product.save()
+            serializer = ProductSerializer(product)
+            return Response(serializer.data, status=200)
+        except Product.DoesNotExist:
+            return Response({"message": "Product not found."}, status=404)
