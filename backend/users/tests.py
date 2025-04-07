@@ -14,7 +14,7 @@ class CustomUserModelTest(TestCase):
             role='CLIENT'
         )
 
-        # Check if the user was created correctly
+
         self.assertEqual(user.username, 'testuser')
         self.assertEqual(user.email, 'testuser@example.com')
         self.assertEqual(user.role, 'CLIENT')

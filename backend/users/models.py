@@ -14,6 +14,7 @@ class CustomUser(AbstractUser):
         default='profile_photos/default.png'
     )
     isActive = models.BooleanField(default=True)
+    fcm_token = models.CharField(max_length=255, blank=True, null=True)
 class Client(models.Model):
     custom_user = models.OneToOneField(
         CustomUser,

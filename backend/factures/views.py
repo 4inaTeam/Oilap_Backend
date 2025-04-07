@@ -60,12 +60,10 @@ class FacturePDFView(APIView):
         p.drawString(50, y, f"Employee: {employee_info}")
         y -= line_height
 
-        # Accountant information (assuming accountant has a 'username' attribute)
         accountant_info = facture.accountant.username if facture.accountant else "N/A"
         p.drawString(50, y, f"Accountant: {accountant_info}")
         y -= line_height
 
-        # Financial details
         p.drawString(50, y, f"Base Amount: {facture.base_amount}")
         y -= line_height
         p.drawString(50, y, f"Tax Amount: {facture.tax_amount}")
@@ -73,7 +71,6 @@ class FacturePDFView(APIView):
         p.drawString(50, y, f"Total Amount: {facture.total_amount}")
         y -= line_height
 
-        # Dates and status
         p.drawString(50, y, f"Issue Date: {facture.issue_date}")
         y -= line_height
         p.drawString(50, y, f"Due Date: {facture.due_date}")
@@ -129,8 +126,16 @@ class FactureStatusView(generics.UpdateAPIView):
         
         serializer.save()
         
-        # TODO: Add status change notification
-        # send_status_notification(instance, new_status)
+        if new_status == 'paid':
+            send_fcm_notification(
+                user=instance.client.custom_user,
+                title="Facture Payée",
+                body=f"La facture #{instance.id} a été marquée comme payée",
+                data={
+                    'type': 'facture_paid',
+                    'facture_id': str(instance.id)
+                }
+            )
 
 class QRCodeValidationView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAccountant]
@@ -172,7 +177,6 @@ class QRCodePaymentView(APIView):
                 qr_verified=False
             )
             
-            # Process payment
             payment_intent = stripe.PaymentIntent.create(
                 amount=int(facture.total_amount * 100),
                 currency='eur',
@@ -183,7 +187,6 @@ class QRCodePaymentView(APIView):
                 }
             )
             
-            # Update facture
             facture.qr_verified = True
             facture.save()
             

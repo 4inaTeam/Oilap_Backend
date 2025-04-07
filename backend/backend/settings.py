@@ -39,7 +39,6 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'users',
-    'notifications',
     'rest_framework',
     'rest_framework_simplejwt',
     'django_rest_passwordreset',
@@ -47,6 +46,8 @@ INSTALLED_APPS = [
     'products',
     'factures',
     'payments',
+    'tickets',
+    'firebase_service'
 ]
 
 REST_FRAMEWORK = {
@@ -59,8 +60,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'oussema.chercheri01@gmail.com'
-EMAIL_HOST_PASSWORD = '0000'
+EMAIL_HOST_USER = 'oussamachercheri0@gmail.com'
+EMAIL_HOST_PASSWORD = 'ssui rbyl qjpu ptmb'
 
 AUTH_USER_MODEL = 'users.CustomUser'
 
@@ -89,7 +90,9 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
             ],
         },
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
     },
+
 ]
 
 MEDIA_URL = '/media/'
