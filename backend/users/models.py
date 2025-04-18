@@ -21,7 +21,7 @@ class Client(models.Model):
         on_delete=models.CASCADE,
         related_name='client_profile'
     )
-    cin = models.CharField(max_length=50, blank=True, null=True)
+    cin = models.CharField(max_length=50, unique=True)
     created_by = models.ForeignKey(
         CustomUser,
         on_delete=models.SET_NULL,

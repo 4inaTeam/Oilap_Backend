@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Product
-from users.models import Client  # Import Client from users app
+from users.models import Client
 
 class ProductSerializer(serializers.ModelSerializer):
     client = serializers.SlugRelatedField(

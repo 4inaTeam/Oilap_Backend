@@ -7,6 +7,7 @@ from .models import CustomUser, Client
 from .permissions import IsAdmin
 from rest_framework.exceptions import ValidationError 
 from rest_framework import generics 
+from django.db import transaction
 
 
 class IsAdmin(permissions.BasePermission):
@@ -37,17 +38,23 @@ class ClientCreateView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def perform_create(self, serializer):
-        custom_user = serializer.save(role='CLIENT')
+        with transaction.atomic(): 
 
-        if hasattr(custom_user, 'client_profile'):
-            raise ValidationError({"error": "Client profile already exists for this user."})
+            custom_user = serializer.save(role='CLIENT')
 
-        Client.objects.create(
-            custom_user=custom_user,
-            created_by=self.request.user,
-            cin=self.request.data.get('cin', None)
-        )
+            cin = self.request.data.get('cin')
+            
+            if not cin:
+                raise ValidationError({"cin": "CIN field is required"})
 
+            if Client.objects.filter(cin=cin).exists():
+                raise ValidationError({"cin": "A client with this CIN already exists"})
+
+            Client.objects.create(
+                custom_user=custom_user,
+                created_by=self.request.user,
+                cin=cin
+            )
 
 class UserListView(APIView):
 
