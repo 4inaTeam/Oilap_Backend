@@ -17,7 +17,7 @@ def password_reset_token_created(sender, instance, reset_password_token, *args, 
     email = EmailMultiAlternatives(
         subject="Password Reset for Your Account",
         body=email_plaintext_message,
-        from_email=settings.EMAIL_HOST_USER,  # Use the same email as SMTP
+        from_email=settings.EMAIL_HOST_USER,
         to=[reset_password_token.user.email]
     )
     email.attach_alternative(email_html_message, "text/html")

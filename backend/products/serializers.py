@@ -3,9 +3,10 @@ from .models import Product
 from users.models import Client  # Import Client from users app
 
 class ProductSerializer(serializers.ModelSerializer):
-    client = serializers.PrimaryKeyRelatedField(
-        queryset=Client.objects.all(),  # Ensure only valid Clients can be assigned
-        required=True  # Make client mandatory
+    client = serializers.SlugRelatedField(
+        queryset=Client.objects.all(),
+        slug_field='cin',
+        required=True
     )
 
     class Meta:
@@ -15,7 +16,6 @@ class ProductSerializer(serializers.ModelSerializer):
             'quantity', 'client', 'status', 'created_by', 'created_at', 'photo'
         ]
         read_only_fields = ['created_by', 'created_at']
-
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
