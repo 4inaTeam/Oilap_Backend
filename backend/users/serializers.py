@@ -31,10 +31,16 @@ class EmailCINAuthSerializer(TokenObtainPairSerializer):
 class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'role', 'password', 'profile_photo', 'isActive']
+        fields = [
+            'id', 'username', 'email', 'role', 
+            'password', 'profile_photo', 'isActive',
+            'cin', 'tel'
+        ]
         extra_kwargs = {
             'password': {'write_only': True},
             'role': {'read_only': True},
+            'cin': {'required': True},
+            'tel': {'required': True},
         }
 
     def create(self, validated_data):
@@ -54,7 +60,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 class AdminUserCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'role', 'password']
+        fields = ['id', 'username', 'email', 'role', 'password', 'cin', 'tel']
         extra_kwargs = {
             'password': {'write_only': True},
         }

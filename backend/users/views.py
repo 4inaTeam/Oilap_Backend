@@ -38,27 +38,19 @@ class UserCreateView(generics.CreateAPIView):
 
 class ClientCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
-    serializer_class = CustomUserSerializer
+    serializer_class = CustomUserSerializer  # Now includes cin/tel validation
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def perform_create(self, serializer):
-        with transaction.atomic(): 
+        # Assign role=CLIENT and validate CIN via the serializer
+        serializer.save(role='CLIENT')
 
-            custom_user = serializer.save(role='CLIENT')
-
-            cin = self.request.data.get('cin')
-            
-            if not cin:
-                raise ValidationError({"cin": "CIN field is required"})
-
-            if Client.objects.filter(cin=cin).exists():
-                raise ValidationError({"cin": "A client with this CIN already exists"})
-
-            Client.objects.create(
-                custom_user=custom_user,
-                created_by=self.request.user,
-                cin=cin
-            )
+        # Link the created user to a Client profile
+        custom_user = serializer.instance
+        Client.objects.create(
+            custom_user=custom_user,
+            created_by=self.request.user
+        )
 
 class UserListView(APIView):
 
