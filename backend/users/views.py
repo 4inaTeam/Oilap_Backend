@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions
-from .serializers import CustomUserSerializer, UserProfileSerializer, AdminUserCreateSerializer, UserActiveStatusSerializer
+from .serializers import CustomUserSerializer, UserProfileSerializer, AdminUserCreateSerializer, UserActiveStatusSerializer, EmailCINAuthSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -8,6 +8,7 @@ from .permissions import IsAdmin
 from rest_framework.exceptions import ValidationError 
 from rest_framework import generics 
 from django.db import transaction
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 
 class IsAdmin(permissions.BasePermission):
@@ -21,6 +22,9 @@ class IsEmployee(permissions.BasePermission):
 class IsAdminOrEmployee(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.role in ['ADMIN', 'EMPLOYEE']
+
+class EmailCINAuthView(TokenObtainPairView):
+    serializer_class = EmailCINAuthSerializer
 
 class UserCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()

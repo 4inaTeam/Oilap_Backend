@@ -1,5 +1,32 @@
 from rest_framework import serializers
 from .models import CustomUser, Client
+from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework import exceptions
+
+User = get_user_model()
+
+class EmailCINAuthSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        login_input = attrs.get(self.username_field)
+        password = attrs.get('password')
+
+        # Check if input is email or CIN
+        if '@' in login_input:
+            user = User.objects.filter(email=login_input).first()
+        elif login_input.isdigit() and len(login_input) == 8:
+            user = User.objects.filter(cin=login_input).first()
+        else:
+            raise exceptions.AuthenticationFailed('Invalid credentials. Use email or CIN.')
+
+        if user and user.check_password(password):
+            if not user.is_active:
+                raise exceptions.AuthenticationFailed('User account is disabled.')
+            
+            data = super().validate(attrs)
+            return data
+
+        raise exceptions.AuthenticationFailed('Invalid credentials.')
 
 class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
