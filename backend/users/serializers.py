@@ -1,32 +1,38 @@
-from rest_framework import serializers
+from rest_framework import serializers, exceptions
 from .models import CustomUser, Client
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework import exceptions
+
 
 User = get_user_model()
 
 class EmailCINAuthSerializer(TokenObtainPairSerializer):
+    cin = serializers.CharField(required=True)
+    password = serializers.CharField(required=True, write_only=True)
+
     def validate(self, attrs):
-        login_input = attrs.get(self.username_field)
+        cin_input = attrs.get('cin')
         password = attrs.get('password')
 
-        # Check if input is email or CIN
-        if '@' in login_input:
-            user = User.objects.filter(email=login_input).first()
-        elif login_input.isdigit() and len(login_input) == 8:
-            user = User.objects.filter(cin=login_input).first()
+        if '@' in cin_input:
+            user = CustomUser.objects.filter(email=cin_input).first()
+        elif cin_input.isdigit() and len(cin_input) == 8:
+            user = CustomUser.objects.filter(cin=cin_input).first()
         else:
-            raise exceptions.AuthenticationFailed('Invalid credentials. Use email or CIN.')
+            raise exceptions.AuthenticationFailed('Invalid credentials. Use CIN or email.')
 
         if user and user.check_password(password):
             if not user.is_active:
                 raise exceptions.AuthenticationFailed('User account is disabled.')
             
-            data = super().validate(attrs)
-            return data
+            refresh = self.get_token(user)
+            return {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
 
         raise exceptions.AuthenticationFailed('Invalid credentials.')
+
 
 class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -80,3 +86,20 @@ class UserActiveStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ['id', 'username', 'isActive']
+
+
+class ClientUpdateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False)
+
+    class Meta:
+        model = CustomUser
+        fields = ['username', 'email', 'password', 'first_name', 'last_name']  # add any field you want to allow
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance

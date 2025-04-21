@@ -12,6 +12,17 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 class Facture(models.Model):
+    TYPE_CHOICES = [
+        ('CLIENT', 'Client Facture'),
+        ('ELECTRICITY', 'Electricity Facture'),
+        ('WATER', 'Water Facture'),
+        ('PURCHASE', 'Facture d\'achat'),
+    ]
+    type = models.CharField(
+        max_length=12,
+        choices=TYPE_CHOICES,
+        default='CLIENT'
+    )
     STATUS_CHOICES = [
         ('unpaid', 'Unpaid'),
         ('paid', 'Paid'),
@@ -21,13 +32,19 @@ class Facture(models.Model):
     product = models.OneToOneField(
         Product,
         on_delete=models.CASCADE,
-        related_name='facture'
+        related_name='facture',
+        null=True,
+        blank=True
     )
     client = models.ForeignKey(
-        Client,
+        CustomUser,
         on_delete=models.CASCADE,
-        related_name='factures'
+        related_name='factures',
+        limit_choices_to={'role': 'CLIENT'},
+        null=True,  # Allow NULL for non-client factures
+        blank=True
     )
+
     employee = models.ForeignKey(
         CustomUser,
         on_delete=models.SET_NULL,
@@ -104,10 +121,21 @@ class Facture(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.pk:
-            self.base_amount = self.product.price * self.product.quantity
-            self.tax_amount = self.base_amount * Decimal('0.20')
-            self.total_amount = self.base_amount + self.tax_amount
-            self.due_date = timezone.now() + timezone.timedelta(days=30)
+            if self.type == 'CLIENT':
+            # Auto-fill for client factures
+                self.client = self.product.client
+                self.base_amount = self.product.price * self.product.quantity
+                self.tax_amount = self.base_amount * Decimal('0.20')
+                self.total_amount = self.base_amount + self.tax_amount
+                self.due_date = (timezone.now() + timezone.timedelta(days=30)).date()
+            else:
+            # For non-client factures, use the provided base_amount
+                if not self.base_amount:
+                    raise ValueError("Base amount is required for non-client factures")
+                self.tax_amount = self.base_amount * Decimal('0.20')
+                self.total_amount = self.base_amount + self.tax_amount
+                if not self.due_date:
+                    self.due_date = (timezone.now() + timezone.timedelta(days=15)).date()
         super().save(*args, **kwargs)
 
 @receiver(post_save, sender=Facture)

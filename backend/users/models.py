@@ -5,8 +5,8 @@ from django.core.validators import RegexValidator
 
 class CustomUser(AbstractUser):
 
-    USERNAME_FIELD = 'email'  # Change the authentication identifier
-    REQUIRED_FIELDS = ['username']  # Remove email from required fields
+    USERNAME_FIELD = 'cin'
+    REQUIRED_FIELDS = ['']
 
     username_validator = RegexValidator(
         regex=r'^[a-zA-Z]+$',
@@ -36,8 +36,10 @@ class CustomUser(AbstractUser):
         error_messages={
             'unique': "A user with that username already exists.",
         },
+        null=True,
+        blank=True
     )
-    email = models.EmailField(unique=True)
+    email = models.EmailField(unique=True, null=True, blank=True)
     
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='CLIENT')
     profile_photo = models.ImageField(

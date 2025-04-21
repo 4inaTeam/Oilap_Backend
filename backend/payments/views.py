@@ -18,45 +18,55 @@ class CreatePaymentIntentView(generics.CreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
+        ser = self.get_serializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        facture_id = ser.validated_data['facture_id']
+        return_url = ser.validated_data.get('return_url')
+
+        # 1) Fetch the facture for THIS user
         try:
             facture = Facture.objects.get(
-                id=serializer.validated_data['facture_id'],
-                client__custom_user=request.user
+                id=facture_id,
+                client=request.user
             )
-            
-            payment_intent = stripe.PaymentIntent.create(
-                amount=int(facture.total_amount * 100),
-                currency='usd',
-                payment_method_types=['card'],
-                metadata={
+        except Facture.DoesNotExist:
+            return Response(
+                {'error': 'Facture non trouvée'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 2) Create the Stripe PaymentIntent
+        try:
+            intent_data = {
+                'amount': int(facture.total_amount * 100),  # cents
+                'currency': 'usd',
+                'payment_method_types': ['card'],
+                'metadata': {
                     'facture_id': facture.id,
                     'user_id': request.user.id
                 }
-            )
-            Payment.objects.create(
-                facture=facture,
-                stripe_payment_intent=payment_intent.id,
-                amount=facture.total_amount,
-                currency='USD'
-            )
-            
-            return Response({
-                'clientSecret': payment_intent.client_secret
-            })
-            
-        except Facture.DoesNotExist:
-            return Response(
-                {'error': 'Facture non trouvée'}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            return Response(
-                {'error': str(e)}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            }
+            if return_url:
+                intent_data['return_url'] = return_url
+
+            payment_intent = stripe.PaymentIntent.create(**intent_data)
+
+        except stripe.error.StripeError as e:
+            # surface a user‑friendly message if Stripe returns one
+            msg = getattr(e, 'user_message', str(e))
+            return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3) Persist your Payment record
+        Payment.objects.create(
+            facture=facture,
+            stripe_payment_intent=payment_intent.id,
+            amount=facture.total_amount,
+            currency=payment_intent.currency.upper()
+        )
+
+        # 4) Return only the client secret to the front end
+        return Response({'clientSecret': payment_intent.client_secret})
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])

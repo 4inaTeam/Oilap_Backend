@@ -2,9 +2,12 @@ from rest_framework import generics, permissions
 from .models import Product
 from .serializers import  ProductSerializer
 from users.permissions import IsEmployee, IsAdmin, IsClient
+from users.models import CustomUser
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import generics
+from rest_framework.exceptions import NotFound
 
 
 class IsAdminOrEmployee(permissions.BasePermission):
@@ -15,26 +18,26 @@ class IsAdminOrEmployee(permissions.BasePermission):
 class ProductCreateView(generics.CreateAPIView):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated, IsEmployee]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
 
 class ProductRetrieveView(generics.RetrieveAPIView):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated, IsEmployee]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
 class ProductUpdateView(generics.UpdateAPIView):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated, IsEmployee]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def perform_update(self, serializer):
         instance = self.get_object()
         new_status = serializer.validated_data.get('status', instance.status)
 
         if 'status' in serializer.validated_data:
-            if not self.request.user.role == 'EMPLOYEE':
-                raise ValidationError("Only employees can update the status of a product.")
+            if self.request.user.role not in ['EMPLOYEE', 'ADMIN']:
+                raise ValidationError("Only employees or admins can update the status of a product.")
 
         if instance.status == 'doing':
             if new_status != 'done':
@@ -51,16 +54,6 @@ class ProductUpdateView(generics.UpdateAPIView):
         serializer.save()
 
 
-class ProductDeleteView(generics.DestroyAPIView):
-    queryset = Product.objects.all()
-    serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated, IsEmployee]
-
-    def perform_destroy(self, instance):
-        if instance.status in ['doing', 'done']:
-            raise ValidationError("You cannot delete a product with status 'doing' or 'done'.")
-        super().perform_destroy(instance)
-
 
 class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
@@ -75,10 +68,10 @@ class ClientProductListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated, IsClient]
 
     def get_queryset(self):
-        return Product.objects.filter(client__custom_user=self.request.user)
+        return Product.objects.filter(client=self.request.user)
 
 class SearchProductByStatus(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def get(self, request, status):
         try:
@@ -92,7 +85,7 @@ class SearchProductByStatus(APIView):
             return Response({"message": "Product not found."}, status=404)
 
 class CancelProductView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsEmployee | IsAdmin] 
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee] 
 
     def post(self, request, product_id):
         try:
@@ -106,3 +99,16 @@ class CancelProductView(APIView):
             return Response(serializer.data, status=200)
         except Product.DoesNotExist:
             return Response({"message": "Product not found."}, status=404)
+
+class AdminClientProductListView(generics.ListAPIView):
+    serializer_class = ProductSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def get_queryset(self):
+        client_id = self.kwargs['client_id']
+        try:
+            client = CustomUser.objects.get(id=client_id, role='CLIENT')
+        except CustomUser.DoesNotExist:
+            raise NotFound(detail="Client not found or invalid client role")
+            
+        return Product.objects.filter(client=client)

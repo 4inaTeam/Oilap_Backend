@@ -1,9 +1,10 @@
+import os
 import io
 import stripe
 from rest_framework import generics, permissions
 from .models import Facture
-from .serializers import FactureSerializer, FactureStatusSerializer, QRCodeValidationSerializer, QRCodePaymentSerializer
-from users.permissions import IsAdmin, IsAccountant, IsEmployee, IsClient
+from .serializers import FactureSerializer, FactureStatusSerializer, QRCodeValidationSerializer, QRCodePaymentSerializer, FactureCreateSerializer
+from users.permissions import IsAdmin, IsAccountant, IsEmployee, IsClient, IsAdminOrAccountant
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.views import APIView
@@ -17,7 +18,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 class FacturePDFView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminOrAccountant]
 
     def get(self, request, pk, format=None):
         try:
@@ -25,14 +26,6 @@ class FacturePDFView(APIView):
         except Facture.DoesNotExist:
             raise NotFound("Facture not found.")
 
-        user = request.user
-        if user.role not in ['ADMIN', 'ACCOUNTANT']:
-            if user.role == 'EMPLOYEE' and facture.employee != user:
-                raise PermissionDenied("You do not have permission to generate a PDF for this Facture.")
-            elif user.role == 'CLIENT' and facture.client.custom_user != user:
-                raise PermissionDenied("You do not have permission to generate a PDF for this Facture.")
-            elif user.role not in ['EMPLOYEE', 'CLIENT']:
-                raise PermissionDenied("You do not have permission to generate a PDF for this Facture.")
 
         buffer = io.BytesIO()
         p = canvas.Canvas(buffer, pagesize=letter)
@@ -40,28 +33,28 @@ class FacturePDFView(APIView):
         y = height - 50 
         line_height = 20
 
+        # Add facture type to title
         p.setFont("Helvetica-Bold", 14)
-        p.drawString(50, y, "Facture Details")
+        title = f"{facture.get_type_display()} Details"
+        p.drawString(50, y, title)
         p.setFont("Helvetica", 12)
         y -= line_height * 2
 
         p.drawString(50, y, f"Facture ID: {facture.id}")
         y -= line_height
 
-        product_info = facture.product.name if facture.product else "N/A"
-        p.drawString(50, y, f"Product: {product_info}")
-        y -= line_height
+        # Only show product/client for CLIENT type
+        if facture.type == 'CLIENT':
+            product_info = facture.product.id if facture.product else "N/A"
+            p.drawString(50, y, f"Product: {product_info}")
+            y -= line_height
 
-        client_info = facture.client.username if hasattr(facture.client, 'username') else f"ID {facture.client.cin}"
-        p.drawString(50, y, f"Client: {client_info}")
-        y -= line_height
+            client_info = facture.client.username if facture.client else "N/A"
+            p.drawString(50, y, f"Client: {client_info}")
+            y -= line_height
 
-        employee_info = facture.employee.username if facture.employee else "N/A"
-        p.drawString(50, y, f"Employee: {employee_info}")
-        y -= line_height
-
-        accountant_info = facture.accountant.username if facture.accountant else "N/A"
-        p.drawString(50, y, f"Accountant: {accountant_info}")
+        # Common fields for all facture types
+        p.drawString(50, y, f"Type: {facture.get_type_display()}")
         y -= line_height
 
         p.drawString(50, y, f"Base Amount: {facture.base_amount}")
@@ -78,12 +71,23 @@ class FacturePDFView(APIView):
         p.drawString(50, y, f"Status: {facture.status}")
         y -= line_height
 
+        # Payment info
         payment_date = facture.payment_date.strftime("%Y-%m-%d %H:%M") if facture.payment_date else "N/A"
         p.drawString(50, y, f"Payment Date: {payment_date}")
         y -= line_height
         p.drawString(50, y, f"Created At: {facture.created_at}")
         y -= line_height
 
+        # QR code handling
+        if facture.qr_code:
+            try:
+                qr_code_path = facture.qr_code.path
+                if os.path.exists(qr_code_path):
+                    p.drawImage(qr_code_path, 50, 100, width=150, height=150)
+                else:
+                    p.drawString(50, 100, "QR Code not found.")
+            except Exception as e:
+                p.drawString(50, 100, f"Error loading QR code: {str(e)}")
 
         p.showPage()
         p.save()
@@ -104,18 +108,18 @@ class FactureListView(generics.ListAPIView):
         if user.role == 'EMPLOYEE':
             return Facture.objects.filter(employee=user)
         if user.role == 'CLIENT':
-            return Facture.objects.filter(client__custom_user=user)
+            return Facture.objects.filter(client=user)
         return Facture.objects.none()
 
 class FactureDetailView(generics.RetrieveAPIView):
     queryset = Facture.objects.all()
     serializer_class = FactureSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrAccountant]
 
 class FactureStatusView(generics.UpdateAPIView):
     queryset = Facture.objects.all()
     serializer_class = FactureStatusSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAccountant]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrAccountant]
 
     def perform_update(self, serializer):
         instance = self.get_object()
@@ -138,7 +142,7 @@ class FactureStatusView(generics.UpdateAPIView):
             )
 
 class QRCodeValidationView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsAccountant]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrAccountant]
     
     def post(self, request):
         serializer = QRCodeValidationSerializer(data=request.data)
@@ -164,7 +168,7 @@ class QRCodeValidationView(APIView):
             return Response({'error': 'Facture non valide'}, status=400)
 
 class QRCodePaymentView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsAccountant]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrAccountant]
     
     def post(self, request):
         serializer = QRCodePaymentSerializer(data=request.data)
@@ -197,3 +201,23 @@ class QRCodePaymentView(APIView):
             
         except Facture.DoesNotExist:
             return Response({'error': 'Facture non valide'}, status=400)
+
+class FactureCreateView(generics.CreateAPIView):
+    queryset = Facture.objects.all()
+    serializer_class = FactureCreateSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrAccountant]
+
+    def perform_create(self, serializer):
+        if serializer.validated_data['type'] == 'CLIENT':
+            serializer.save(employee=self.request.user)
+        else:
+            # Calculate tax for non-client factures
+            base_amount = serializer.validated_data['base_amount']
+            tax_amount = base_amount * Decimal('0.20')
+            total_amount = base_amount + tax_amount
+            
+            serializer.save(
+                employee=self.request.user,
+                tax_amount=tax_amount,
+                total_amount=total_amount
+            )

@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions
-from .serializers import CustomUserSerializer, UserProfileSerializer, AdminUserCreateSerializer, UserActiveStatusSerializer, EmailCINAuthSerializer
+from .serializers import CustomUserSerializer, UserProfileSerializer, AdminUserCreateSerializer, UserActiveStatusSerializer, EmailCINAuthSerializer, ClientUpdateSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -38,14 +38,11 @@ class UserCreateView(generics.CreateAPIView):
 
 class ClientCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
-    serializer_class = CustomUserSerializer  # Now includes cin/tel validation
+    serializer_class = CustomUserSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def perform_create(self, serializer):
-        # Assign role=CLIENT and validate CIN via the serializer
         serializer.save(role='CLIENT')
-
-        # Link the created user to a Client profile
         custom_user = serializer.instance
         Client.objects.create(
             custom_user=custom_user,
@@ -53,11 +50,28 @@ class ClientCreateView(generics.CreateAPIView):
         )
 
 class UserListView(APIView):
+    permisson_classes= [IsAuthenticated, IsAdmin]
 
     def get(self, request):
         users = CustomUser.objects.all()
         data = [{"username": user.username, "role": user.role, "isActive": user.isActive} for user in users]
         return Response(data)
+
+
+
+class UserDeleteView(generics.DestroyAPIView):
+    queryset = CustomUser.objects.all()
+    serializer_class = UserActiveStatusSerializer
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def perform_destroy(self, instance):
+        if instance.role == 'CLIENT':
+            raise ValidationError("Cannot delete client accounts.")
+            
+        if instance.role == 'ADMIN':
+            raise ValidationError("Cannot delete admin accounts.")
+            
+        instance.delete()
 
 class AdminOnlyView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
@@ -110,3 +124,12 @@ class UserDeactivateView(APIView):
 
         serializer = UserActiveStatusSerializer(user)
         return Response(serializer.data)
+
+class ClientUpdateView(generics.UpdateAPIView):
+    queryset = CustomUser.objects.filter(role='CLIENT')
+    serializer_class = ClientUpdateSerializer
+    permission_classes = [IsAuthenticated, IsAdminOrEmployee]
+    lookup_field = 'id'
+
+    def get_queryset(self):
+        return super().get_queryset()

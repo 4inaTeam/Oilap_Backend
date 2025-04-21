@@ -15,3 +15,7 @@ class IsClient(BasePermission):
 class IsAccountant(BasePermission):
     def has_permission(self, request, view):
         return request.user.role == 'ACCOUNTANT'
+
+class IsAdminOrAccountant(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.role in ['ADMIN', 'ACCOUNTANT']
