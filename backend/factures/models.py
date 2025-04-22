@@ -41,7 +41,7 @@ class Facture(models.Model):
         on_delete=models.CASCADE,
         related_name='factures',
         limit_choices_to={'role': 'CLIENT'},
-        null=True,  # Allow NULL for non-client factures
+        null=True,
         blank=True
     )
 
@@ -86,6 +86,19 @@ class Facture(models.Model):
     payment_uuid = models.UUIDField(default=uuid.uuid4, editable=False, null=True)
     qr_verified = models.BooleanField(default=False)
 
+    image = models.ImageField(
+        upload_to='facture_images/',
+        null=True,
+        blank=True,
+        help_text="Upload an image for non-client factures (water, electricity, purchase)"
+    )
+    pdf_file = models.FileField(
+        upload_to='facture_pdfs/',
+        null=True,
+        blank=True,
+        editable=False
+    )
+
     class Meta:
         ordering = ['-due_date']
         indexes = [
@@ -93,7 +106,7 @@ class Facture(models.Model):
         ]
 
     def __str__(self):
-        return f"FACT-{self.id}-{self.product.name[:10]}"
+        return f"FACT-{self.id}-{self.get_type_display()}"
 
     def generate_qr_code(self):
         qr = qrcode.QRCode(
@@ -122,24 +135,46 @@ class Facture(models.Model):
     def save(self, *args, **kwargs):
         if not self.pk:
             if self.type == 'CLIENT':
-            # Auto-fill for client factures
                 self.client = self.product.client
                 self.base_amount = self.product.price * self.product.quantity
                 self.tax_amount = self.base_amount * Decimal('0.20')
                 self.total_amount = self.base_amount + self.tax_amount
                 self.due_date = (timezone.now() + timezone.timedelta(days=30)).date()
             else:
-            # For non-client factures, use the provided base_amount
-                if not self.base_amount:
-                    raise ValueError("Base amount is required for non-client factures")
-                self.tax_amount = self.base_amount * Decimal('0.20')
-                self.total_amount = self.base_amount + self.tax_amount
                 if not self.due_date:
                     self.due_date = (timezone.now() + timezone.timedelta(days=15)).date()
         super().save(*args, **kwargs)
+    def create(self, validated_data):
+        # if non-client and no due_date provided, set a default
+        if validated_data.get('type') != 'CLIENT' and 'due_date' not in validated_data:
+            validated_data['due_date'] = (
+                timezone.now() + timezone.timedelta(days=15)
+            ).date()
+        return super().create(validated_data)
 
 @receiver(post_save, sender=Facture)
 def generate_qr_code(sender, instance, created, **kwargs):
     if created and not instance.qr_code:
         instance.generate_qr_code()
         instance.save()
+
+@receiver(post_save, sender=Facture)
+def generate_non_client_pdf(sender, instance, created, **kwargs):
+    if created and instance.type != 'CLIENT' and instance.image:
+        import img2pdf
+        from django.core.files.base import ContentFile
+
+        try:
+            image_file = instance.image.open()
+            pdf_bytes = img2pdf.convert(image_file.read())
+            image_file.close()
+
+            pdf_name = f"facture_{instance.id}.pdf"
+            instance.pdf_file.save(pdf_name, ContentFile(pdf_bytes), save=True)
+
+            instance.base_amount = Decimal('0.00')
+            instance.tax_amount = Decimal('0.00')
+            instance.total_amount = Decimal('0.00')
+            instance.save()
+        except Exception as e:
+            print(f"Error generating PDF: {e}")

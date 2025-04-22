@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 class FacturePDFView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminOrAccountant]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, pk, format=None):
         try:
@@ -26,14 +26,30 @@ class FacturePDFView(APIView):
         except Facture.DoesNotExist:
             raise NotFound("Facture not found.")
 
+        user = request.user
+        if facture.type == 'CLIENT':
+            if not (user.role in ['ADMIN', 'ACCOUNTANT'] or 
+                    (user.role == 'CLIENT' and facture.client == user)):
+                raise PermissionDenied()
+        else:
+            if user.role not in ['ADMIN', 'ACCOUNTANT']:
+                raise PermissionDenied()
 
+        if facture.type != 'CLIENT':
+            if not facture.pdf_file:
+                return Response(
+                    {"error": "PDF not available."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            response = HttpResponse(facture.pdf_file.read(), content_type='application/pdf')
+            response['Content-Disposition'] = f'filename="facture_{facture.id}.pdf"'
+            return response
         buffer = io.BytesIO()
         p = canvas.Canvas(buffer, pagesize=letter)
         width, height = letter
         y = height - 50 
         line_height = 20
 
-        # Add facture type to title
         p.setFont("Helvetica-Bold", 14)
         title = f"{facture.get_type_display()} Details"
         p.drawString(50, y, title)
@@ -95,6 +111,16 @@ class FacturePDFView(APIView):
         buffer.seek(0)
         return HttpResponse(buffer, content_type='application/pdf')
 
+def get_queryset(self):
+    user = self.request.user
+    if user.role == 'ADMIN':
+        return Facture.objects.all()
+    if user.role == 'ACCOUNTANT':
+        return Facture.objects.filter(accountant=user)
+    if user.role == 'CLIENT':
+        return Facture.objects.filter(client=user, type='CLIENT')
+    return Facture.objects.none()
+
 class FactureListView(generics.ListAPIView):
     serializer_class = FactureSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -105,11 +131,10 @@ class FactureListView(generics.ListAPIView):
             return Facture.objects.all()
         if user.role == 'ACCOUNTANT':
             return Facture.objects.filter(accountant=user)
-        if user.role == 'EMPLOYEE':
-            return Facture.objects.filter(employee=user)
         if user.role == 'CLIENT':
             return Facture.objects.filter(client=user)
         return Facture.objects.none()
+
 
 class FactureDetailView(generics.RetrieveAPIView):
     queryset = Facture.objects.all()

@@ -23,4 +23,4 @@ class Ticket(models.Model):
     date = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Ticket for {self.client.custom_user.username} - {self.product.id}"
+        return f"Ticket for {self.client.username} - {self.product.id}"
