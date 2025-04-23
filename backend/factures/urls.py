@@ -6,7 +6,7 @@ from .views import (
     FacturePDFView,
     QRCodeValidationView,
     QRCodePaymentView,
-    FactureCreateView
+    FactureCreateView,
 )
 
 urlpatterns = [

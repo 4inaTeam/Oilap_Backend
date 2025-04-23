@@ -33,6 +33,10 @@ class ProductUpdateView(generics.UpdateAPIView):
 
     def perform_update(self, serializer):
         instance = self.get_object()
+        
+        if instance.status == 'done':
+            raise ValidationError("Cannot update a product with 'done' status.")
+        
         new_status = serializer.validated_data.get('status', instance.status)
 
         if 'status' in serializer.validated_data:
@@ -42,13 +46,13 @@ class ProductUpdateView(generics.UpdateAPIView):
         if instance.status == 'doing':
             if new_status != 'done':
                 raise ValidationError("Cannot update product information when status is 'doing'. Only status can be updated to 'done'.")
-
+            
             validated_data_copy = serializer.validated_data.copy()
             for field in list(validated_data_copy.keys()):
                 if field != 'status':
                     del validated_data_copy[field]
-
-            serializer.validated_data.clear() 
+            
+            serializer.validated_data.clear()
             serializer.validated_data.update(validated_data_copy)
 
         serializer.save()

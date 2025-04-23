@@ -39,8 +39,8 @@ class CreatePaymentIntentView(generics.CreateAPIView):
         # 2) Create the Stripe PaymentIntent
         try:
             intent_data = {
-                'amount': int(facture.total_amount * 100),  # cents
-                'currency': 'usd',
+                'amount': int(facture.total_amount), 
+                'currency': 'tnd',
                 'payment_method_types': ['card'],
                 'metadata': {
                     'facture_id': facture.id,
@@ -118,19 +118,20 @@ def stripe_webhook(request):
 
     if event['type'] == 'payment_intent.succeeded':
         payment_intent = event['data']['object']
-        
+    
         try:
             payment = Payment.objects.get(
                 stripe_payment_intent=payment_intent['id']
             )
             payment.status = 'succeeded'
-            payment.facture.status = 'paid'
-            payment.facture.payment_date = timezone.now()
-            payment.facture.save()
             payment.save()
             
+            facture = payment.facture
+            facture.status = 'paid' 
+            facture.payment_date = timezone.now()
+            facture.save()
             # TODO: Ajouter une notification Firebase ici
-            
+        
         except Payment.DoesNotExist:
             pass
 

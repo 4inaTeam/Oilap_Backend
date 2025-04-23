@@ -13,9 +13,14 @@ import os
 
 from pathlib import Path
 
+import firebase_admin
+from firebase_admin import credentials
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+cred = credentials.Certificate('./oilap-8a178-firebase-adminsdk-fbsvc-0b05532864.json')
+firebase_admin.initialize_app(cred)
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
@@ -156,3 +161,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 STRIPE_PUBLIC_KEY = 'pk_test_51R7CAPGaWkUiZSZpWP8sUXLyKXt2K96b4zzesdNxh7ZOdB1K1hkhxvTAd00e8oxPtuUiUOo1SnQnGwEQi0GczjKK006OvqX3Dq'
 STRIPE_SECRET_KEY = 'sk_test_51R7CAPGaWkUiZSZp2WGq72BhUuwCNhMD84VuzIjiB8GUbE9EXr88Or93hiqFte6A4tax02H3up41SWVgWKHHO9F600Fwleyvdh'
 STRIPE_WEBHOOK_SECRET = 'whsec_5751c622ebec9b75225610e369f504143b7fe9bf725a4578b43cc3b922aedc0a'
+
+
+TWILIO_ACCOUNT_SID   = 'ACb4147629cd41cc783c1350d4324fc758'
+TWILIO_AUTH_TOKEN    = 'ce29da670a80c21081051ed653664e76'
+TWILIO_PHONE_NUMBER  = '+19472224949'
+TWILIO_ENABLED = True

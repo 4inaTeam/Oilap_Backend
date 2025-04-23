@@ -3,8 +3,9 @@ import io
 import stripe
 from rest_framework import generics, permissions
 from .models import Facture
+from payments.models import Payment
 from .serializers import FactureSerializer, FactureStatusSerializer, QRCodeValidationSerializer, QRCodePaymentSerializer, FactureCreateSerializer
-from users.permissions import IsAdmin, IsAccountant, IsEmployee, IsClient, IsAdminOrAccountant
+from users.permissions import IsAdminOrAccountant
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.views import APIView
@@ -184,7 +185,7 @@ class QRCodeValidationView(APIView):
             )
             return Response({
                 'facture_id': facture.id,
-                'client': facture.client.custom_user.get_full_name(),
+                'client': facture.client.get_full_name(),
                 'amount': facture.total_amount,
                 'status': 'valid'
             }, status=status.HTTP_200_OK)
@@ -207,17 +208,30 @@ class QRCodePaymentView(APIView):
             )
             
             payment_intent = stripe.PaymentIntent.create(
-                amount=int(facture.total_amount * 100),
-                currency='eur',
+                amount=int(facture.total_amount * 100), 
+                currency='usd',
                 payment_method_types=['card'],
                 metadata={
                     'facture_id': facture.id,
-                    'payment_type': 'qr_code'
+                    'payment_uuid': str(facture.payment_uuid)
+                }
+            )
+            
+            payment, created = Payment.objects.get_or_create(
+                facture=facture,
+                defaults={
+                    'stripe_payment_intent': payment_intent.id,
+                    'amount': facture.total_amount,
+                    'currency': 'USD'
                 }
             )
             
             facture.qr_verified = True
             facture.save()
+
+            facture.status = 'paid'
+            facture.payment_date = timezone.now()
+            facture.save(update_fields=['status', 'payment_date'])
             
             return Response({
                 'client_secret': payment_intent.client_secret,
@@ -227,6 +241,7 @@ class QRCodePaymentView(APIView):
         except Facture.DoesNotExist:
             return Response({'error': 'Facture non valide'}, status=400)
 
+        
 class FactureCreateView(generics.CreateAPIView):
     queryset = Facture.objects.all()
     serializer_class = FactureCreateSerializer
