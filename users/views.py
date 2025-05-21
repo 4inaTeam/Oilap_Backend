@@ -1,16 +1,20 @@
-from rest_framework import generics, permissions
-from .serializers import CustomUserSerializer, UserProfileSerializer, AdminUserCreateSerializer, UserActiveStatusSerializer, EmailCINAuthSerializer, ClientUpdateSerializer
-from rest_framework.permissions import IsAuthenticated
+from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from .models import CustomUser, Client
-from .permissions import IsAdmin
-from rest_framework.exceptions import ValidationError 
-from rest_framework import generics 
+from rest_framework.exceptions import ValidationError
 from django.db import transaction
-from rest_framework_simplejwt.views import TokenObtainPairView
 
+from .models import CustomUser, Client
+from .serializers import (
+    CustomUserSerializer,
+    UserProfileSerializer,
+    AdminUserCreateSerializer,
+    UserActiveStatusSerializer,
+    EmailCINAuthSerializer,
+    ClientUpdateSerializer
+)
 
+# --- Custom Permissions ---
 class IsAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.role == 'ADMIN'
@@ -23,19 +27,27 @@ class IsAdminOrEmployee(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.role in ['ADMIN', 'EMPLOYEE']
 
-class EmailCINAuthView(TokenObtainPairView):
-    serializer_class = EmailCINAuthSerializer
 
+# --- Auth View ---
+class EmailCINAuthView(APIView):
+    def post(self, request, *args, **kwargs):
+        serializer = EmailCINAuthSerializer(data=request.data)
+        if serializer.is_valid():
+            return Response(serializer.validated_data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# --- Admin User Creation ---
 class UserCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = AdminUserCreateSerializer
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        print(f"User role: {request.user.role}")
-        print(f"User is authenticated: {request.user.is_authenticated}")
         return super().post(request, *args, **kwargs)
 
+
+# --- Client User Creation ---
 class ClientCreateView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = CustomUserSerializer
@@ -43,63 +55,78 @@ class ClientCreateView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(role='CLIENT')
-        custom_user = serializer.instance
         Client.objects.create(
-            custom_user=custom_user,
+            custom_user=serializer.instance,
             created_by=self.request.user
         )
 
+
+# --- List All Users ---
 class UserListView(APIView):
-    permisson_classes= [IsAuthenticated, IsAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
 
     def get(self, request):
         users = CustomUser.objects.all()
-        data = [{"username": user.username, "role": user.role, "isActive": user.isActive} for user in users]
+        data = [
+            {
+                "cin": user.cin,
+                "email": user.email,
+                "role": user.role,
+                "isActive": user.isActive
+            } for user in users
+        ]
         return Response(data)
 
 
-
+# --- Delete Non-Client/Admin Users ---
 class UserDeleteView(generics.DestroyAPIView):
     queryset = CustomUser.objects.all()
     serializer_class = UserActiveStatusSerializer
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
 
     def perform_destroy(self, instance):
         if instance.role == 'CLIENT':
             raise ValidationError("Cannot delete client accounts.")
-            
         if instance.role == 'ADMIN':
             raise ValidationError("Cannot delete admin accounts.")
-            
         instance.delete()
 
+
+# --- Admin-Only Test Endpoint ---
 class AdminOnlyView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
 
     def get(self, request):
         return Response({"message": "This is an admin-only endpoint."})
 
+
+# --- Get Current User Profile ---
 class CurrentUserView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         serializer = CustomUserSerializer(request.user)
         return Response(serializer.data)
 
+
+# --- Search Client by CIN ---
 class SearchClientByCIN(APIView):
-    permission_classes = [IsAuthenticated, IsAdminOrEmployee]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def get(self, request, cin):
         try:
-            client = Client.objects.get(cin=cin)
+            client_user = CustomUser.objects.get(cin=cin, role='CLIENT')
+            client = Client.objects.get(custom_user=client_user)
             user_serializer = CustomUserSerializer(client.custom_user)
             return Response({
-                "cin": client.cin,
+                "cin": client.custom_user.cin,
                 "user": user_serializer.data
             })
-        except Client.DoesNotExist:
-            return Response({"message": "Client not found."}, status=404)
+        except (CustomUser.DoesNotExist, Client.DoesNotExist):
+            return Response({"message": "Client not found."}, status=status.HTTP_404_NOT_FOUND)
 
+
+# --- Update Current User Profile ---
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -110,14 +137,16 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     def perform_update(self, serializer):
         serializer.save(role=self.request.user.role)
 
+
+# --- Deactivate User by ID ---
 class UserDeactivateView(APIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
 
     def patch(self, request, user_id):
         try:
             user = CustomUser.objects.get(id=user_id)
         except CustomUser.DoesNotExist:
-            return Response({'error': 'User not found.'}, status=404)
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         user.isActive = False
         user.save()
@@ -125,11 +154,10 @@ class UserDeactivateView(APIView):
         serializer = UserActiveStatusSerializer(user)
         return Response(serializer.data)
 
+
+# --- Update Client Info ---
 class ClientUpdateView(generics.UpdateAPIView):
     queryset = CustomUser.objects.filter(role='CLIENT')
     serializer_class = ClientUpdateSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrEmployee]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
     lookup_field = 'id'
-
-    def get_queryset(self):
-        return super().get_queryset()

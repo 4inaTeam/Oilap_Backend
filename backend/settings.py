@@ -57,7 +57,8 @@ INSTALLED_APPS = [
     'factures',
     'payments',
     'tickets',
-    'firebase_service'
+    'firebase_service',
+    'corsheaders',
 ]
 
 REST_FRAMEWORK = {
@@ -83,6 +84,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
 
 ROOT_URLCONF = 'backend.urls'
@@ -183,3 +185,38 @@ ML_MODEL_PATH = os.path.join(BASE_DIR, 'ml_model', 'invoice_classifier.h5')
 CONFIDENCE_THRESHOLD = 0.7
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTENSIONS = ('png', 'jpg', 'jpeg')
+
+REST_PASSWORDRESET = {
+    'TOKEN_EXPIRY_TIME_HOURS': 0,
+    'TOKEN_EXPIRY_TIME_MINUTES': 15, 
+}
+
+ALLOWED_HOSTS = ['*']
+
+CORS_ALLOW_ALL_ORIGINS = True  
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]

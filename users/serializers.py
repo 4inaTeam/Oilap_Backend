@@ -5,33 +5,42 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 
 User = get_user_model()
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework import serializers, exceptions # Adjust this import as needed
 
-class EmailCINAuthSerializer(TokenObtainPairSerializer):
-    cin = serializers.CharField(required=True)
+from rest_framework import serializers, exceptions
+from rest_framework_simplejwt.tokens import RefreshToken
+from users.models import CustomUser  # adjust this import if needed
+
+class EmailCINAuthSerializer(serializers.Serializer):
+    identifier = serializers.CharField(required=True)
     password = serializers.CharField(required=True, write_only=True)
 
     def validate(self, attrs):
-        cin_input = attrs.get('cin')
+        identifier = attrs.get('identifier')
         password = attrs.get('password')
 
-        if '@' in cin_input:
-            user = CustomUser.objects.filter(email=cin_input).first()
-        elif cin_input.isdigit() and len(cin_input) == 8:
-            user = CustomUser.objects.filter(cin=cin_input).first()
+        user = None
+
+        if '@' in identifier:
+            user = CustomUser.objects.filter(email__iexact=identifier).first()
+        elif identifier.isdigit() and len(identifier) == 8:
+            user = CustomUser.objects.filter(cin=identifier).first()
         else:
-            raise exceptions.AuthenticationFailed('Invalid credentials. Use CIN or email.')
+            raise exceptions.AuthenticationFailed('Invalid identifier format. Use a valid email or 8-digit CIN.')
 
         if user and user.check_password(password):
             if not user.is_active:
                 raise exceptions.AuthenticationFailed('User account is disabled.')
-            
-            refresh = self.get_token(user)
+
+            refresh = RefreshToken.for_user(user)
             return {
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
             }
 
         raise exceptions.AuthenticationFailed('Invalid credentials.')
+
 
 
 class CustomUserSerializer(serializers.ModelSerializer):

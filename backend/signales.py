@@ -1,24 +1,26 @@
+import random
+from django.dispatch import receiver
+from django_rest_passwordreset.signals import reset_password_token_created
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
-from django_rest_passwordreset.signals import reset_password_token_created
-from django.dispatch import receiver
-
-from backend.backend import settings
+from django.conf import settings
 
 @receiver(reset_password_token_created)
 def password_reset_token_created(sender, instance, reset_password_token, *args, **kwargs):
-    context = {
-        'token': reset_password_token.key,
-    }
-    email_html_message = render_to_string('password_reset_email.html', context)
-    email_plaintext_message = f"Use the following token to reset your password: {reset_password_token.key}"
+    code = f"{random.randint(0, 9999):04d}"
 
-    # In signals.py
+    reset_password_token.key = code
+    reset_password_token.save(update_fields=['key'])
+
+    context = {'token': code}
+    html = render_to_string('password_reset_email.html', context)
+    text = f"Use the following code to reset your password: {code}"
+
     email = EmailMultiAlternatives(
-        subject="Password Reset for Your Account",
-        body=email_plaintext_message,
+        subject="Your Password Reset Code",
+        body=text,
         from_email=settings.EMAIL_HOST_USER,
-        to=[reset_password_token.user.email]
+        to=[reset_password_token.user.email],
     )
-    email.attach_alternative(email_html_message, "text/html")
+    email.attach_alternative(html, "text/html")
     email.send()
