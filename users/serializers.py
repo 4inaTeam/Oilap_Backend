@@ -66,10 +66,13 @@ class CustomUserSerializer(serializers.ModelSerializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ['username', 'email', 'profile_photo']
+        fields = ['username', 'email', 'profile_photo', 'tel', 'cin']
         extra_kwargs = {
             'username': {'required': False},
             'email': {'required': False},
+            'profile_photo': {'required': False},
+            'tel': {'required': False},
+            'cin': {'required': False},
         }
 
 class AdminUserCreateSerializer(serializers.ModelSerializer):
