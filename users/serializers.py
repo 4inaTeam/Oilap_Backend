@@ -2,15 +2,12 @@ from rest_framework import serializers, exceptions
 from .models import CustomUser, Client
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework import serializers, exceptions 
+
 
 
 User = get_user_model()
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework import serializers, exceptions # Adjust this import as needed
-
-from rest_framework import serializers, exceptions
-from rest_framework_simplejwt.tokens import RefreshToken
-from users.models import CustomUser  # adjust this import if needed
 
 class EmailCINAuthSerializer(serializers.Serializer):
     identifier = serializers.CharField(required=True)
@@ -105,7 +102,7 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomUser
-        fields = ['username', 'email', 'password', 'first_name', 'last_name']  # add any field you want to allow
+        fields = ['username', 'email', 'password', 'first_name', 'last_name']
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
@@ -113,5 +110,50 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         if password:
             instance.set_password(password)
+        instance.save()
+        return instance
+    
+class EmployeeAccountantUpdateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False)
+
+    class Meta:
+        model = CustomUser
+        fields = ['username', 'email', 'password', 'tel', 'profile_photo', 'role']
+        extra_kwargs = {
+            'username': {'required': False},
+            'email': {'required': False},
+            'tel': {'required': False},
+            'profile_photo': {'required': False},
+        }
+
+    def validate_role(self, value):
+        """Ensure only EMPLOYEE or ACCOUNTANT roles can be set"""
+        valid_roles = ['EMPLOYEE', 'ACCOUNTANT']
+        if value and value not in valid_roles:
+            raise serializers.ValidationError(
+                f"Invalid role. Allowed roles: {', '.join(valid_roles)}"
+            )
+        return value
+
+    def validate_email(self, value):
+        """Ensure email uniqueness when updating"""
+        if value:
+            # Exclude current instance from uniqueness check
+            queryset = CustomUser.objects.filter(email=value)
+            if self.instance:
+                queryset = queryset.exclude(pk=self.instance.pk)
+            if queryset.exists():
+                raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        if password:
+            instance.set_password(password)
+        
         instance.save()
         return instance

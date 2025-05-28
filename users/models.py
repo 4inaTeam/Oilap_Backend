@@ -1,4 +1,3 @@
-# users/models.py
 from django.db import models
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.core.validators import RegexValidator
@@ -30,14 +29,12 @@ class CustomUserManager(BaseUserManager):
         return self.create_user(cin, username, email, password, **extra_fields)
 
 class CustomUser(AbstractUser):
-    # Keep username as a separate field
     username = models.CharField(
         max_length=150,
         unique=False,
         help_text=_('Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.'),
     )
 
-    # Use CIN for authentication
     USERNAME_FIELD = 'cin'
     REQUIRED_FIELDS = ['username', 'email']
 

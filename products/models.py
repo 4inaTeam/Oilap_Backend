@@ -1,6 +1,7 @@
 from django.db import models
 from users.models import CustomUser, Client
 
+
 class Product(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -20,10 +21,10 @@ class Product(models.Model):
         default='products/default.jpg'
     )
     client = models.ForeignKey(
-        CustomUser,  # Changed from Client to CustomUser
+        CustomUser,
         on_delete=models.CASCADE,
         related_name='products',
-        limit_choices_to={'role': 'CLIENT'}  # Only allow users with role CLIENT
+        limit_choices_to={'role': 'CLIENT'}
     )
     created_by = models.ForeignKey(
         CustomUser,
@@ -31,8 +32,9 @@ class Product(models.Model):
         related_name='created_products'
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
-    estimation_date = models.DateTimeField(null=True, blank=True) 
+    status = models.CharField(
+        max_length=10, choices=STATUS_CHOICES, default='pending')
+    estimation_date = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
-        return f"{self.name} - {self.get_status_display()}"
+        return f"Product {self.id} - {self.get_status_display()}"

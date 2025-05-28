@@ -1,10 +1,10 @@
 from django.urls import path
 from .views import (
     ProductCreateView,
-    ProductRetrieveView,  
-    ProductUpdateView, 
+    ProductRetrieveView,
+    ProductUpdateView,
     ProductListView,
-    ClientProductListView,  
+    ClientProductListView,
     SearchProductByStatus,
     CancelProductView,
     AdminClientProductListView
@@ -17,11 +17,13 @@ urlpatterns = [
     path('<int:pk>/', ProductRetrieveView.as_view(), name='product-retrieve'),
     path('<int:pk>/update/', ProductUpdateView.as_view(), name='product-update'),
     path('', ProductListView.as_view(), name='product-list'),
-    path('client/products/', ClientProductListView.as_view(), name='client-product-list'),
-    path('search/<str:status>/', SearchProductByStatus.as_view(), name='search-product-by-status'),
+    path('client/products/', ClientProductListView.as_view(),
+         name='client-product-list'),
+    path('search/<str:status>/', SearchProductByStatus.as_view(),
+         name='search-product-by-status'),
     path('cancel/<int:pk>/', CancelProductView.as_view(), name='cancel-product'),
     path(
-        'admin/client-products/<int:client_id>/',
+        'admin/client-products/<str:client_cin>/',
         AdminClientProductListView.as_view(),
         name='admin-client-products'
     ),

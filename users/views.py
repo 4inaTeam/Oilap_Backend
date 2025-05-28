@@ -11,10 +11,9 @@ from .serializers import (
     AdminUserCreateSerializer,
     UserActiveStatusSerializer,
     EmailCINAuthSerializer,
-    ClientUpdateSerializer
+    ClientUpdateSerializer,
+    EmployeeAccountantUpdateSerializer
 )
-
-# --- Custom Permissions ---
 
 
 class IsAdmin(permissions.BasePermission):
@@ -142,6 +141,21 @@ class SearchUserByCIN(APIView):
             return Response({"message": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
 
+class GetUserById(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+
+    def get(self, request, user_id): 
+        try:
+            user = CustomUser.objects.get(id=user_id)
+            serializer = CustomUserSerializer(user)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except CustomUser.DoesNotExist:
+            return Response(
+                {"message": "User not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -174,3 +188,33 @@ class ClientUpdateView(generics.UpdateAPIView):
     serializer_class = ClientUpdateSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
     lookup_field = 'id'
+
+
+class EmployeeAccountantUpdateView(generics.UpdateAPIView):
+    """
+    Update view for Employee and Accountant users.
+    Only admins can update employee/accountant information.
+    """
+    serializer_class = EmployeeAccountantUpdateSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+    lookup_field = 'id'
+
+    def get_queryset(self):
+        """Only allow updating EMPLOYEE and ACCOUNTANT users"""
+        return CustomUser.objects.filter(role__in=['EMPLOYEE', 'ACCOUNTANT'])
+
+    def patch(self, request, *args, **kwargs):
+        """Handle partial updates"""
+        return super().patch(request, *args, **kwargs)
+
+    def put(self, request, *args, **kwargs):
+        """Handle full updates"""
+        return super().put(request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        """Additional logic before saving the update"""
+        user = serializer.save()
+
+        # You can add additional logic here if needed
+        # For example, logging the update or sending notifications
+        return user
