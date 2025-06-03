@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Notification de ticket - Ollap</title>
+</head>
+<body>
+    <h2>Bonjour {{ client_name }},</h2>
+    <p>Votre ticket pour <strong>{{ product_name }}</strong> a été généré avec succès ✅</p>
+    
+    <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px;">
+        <h3>Détails du ticket :</h3>
+        <ul>
+            <li>📅 Date de création : {{ ticket_date|date:"d/m/Y" }}</li>
+            <li>💰 Montant total : {{ facture_amount }} €</li>
+            <li>⏳ Date d'échéance : {{ due_date|date:"d/m/Y" }}</li>
+        </ul>
+    </div>
+
+    <p style="margin-top: 30px;">
+        Cordialement,<br>
+        <strong>L'équipe Ollap</strong><br>
+        <img src="https://ibb.co/Fkk0tH3k" alt="Logo Ollap" width="120">
+    </p>
+</body>
+</html>
