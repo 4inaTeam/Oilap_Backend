@@ -11,6 +11,10 @@ from django.core.files import File
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.exceptions import ValidationError
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Facture(models.Model):
@@ -75,19 +79,19 @@ class Facture(models.Model):
     base_amount = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        default=Decimal('0.00'),  # Add default
+        default=Decimal('0.00'),
         editable=False
     )
     tax_amount = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        default=Decimal('0.00'),  # Add default
+        default=Decimal('0.00'),
         editable=False
     )
     total_amount = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        default=Decimal('0.00'),  # Add default
+        default=Decimal('0.00'),
         editable=False
     )
     issue_date = models.DateField(auto_now_add=True)
@@ -123,108 +127,288 @@ class Facture(models.Model):
         ordering = ['-due_date']
         indexes = [
             models.Index(fields=['status', 'due_date']),
+            models.Index(fields=['type', 'status']),
+            models.Index(fields=['client', 'status']),
         ]
 
     def __str__(self):
         return f"FACT-{self.id}-{self.get_type_display()}"
 
-    def generate_qr_code(self):
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_L,
-            box_size=10,
-            border=4,
-        )
-
-        data = {
-            "facture_id": self.id,
-            "uuid": str(self.payment_uuid),
-            "amount": str(self.total_amount),
-            "currency": "EUR"
-        }
-
-        qr.add_data(json.dumps(data))
-        qr.make(fit=True)
-
-        img = qr.make_image(fill_color="black", back_color="white")
-        buffer = BytesIO()
-        img.save(buffer)
-
-        self.qr_code.save(f'facture_{self.id}_qr.png',
-                          File(buffer), save=False)
-
     def clean(self):
-        """Add model-level validation"""
+        """Custom validation for Facture model"""
         super().clean()
 
-        if self.predicted_type and self.predicted_type not in dict(self.TYPE_CHOICES):
-            raise ValidationError({'predicted_type': 'Invalid predicted type'})
-
-        # Client invoices must have a product with a client
+        # CLIENT type specific validations
         if self.type == 'CLIENT':
+            if not self.client:
+                raise ValidationError(
+                    {'client': 'Client is required for CLIENT type factures.'})
             if not self.product:
-                raise ValidationError("Client invoices require a product")
-            if not self.product.client:
                 raise ValidationError(
-                    "Selected product has no associated client")
-        else:
-            if self.product:
-                raise ValidationError(
-                    "Non-client invoices cannot have products")
+                    {'product': 'Product is required for CLIENT type factures.'})
+
+        # Ensure amounts are positive
+        if self.base_amount < 0:
+            raise ValidationError(
+                {'base_amount': 'Base amount cannot be negative.'})
 
     def save(self, *args, **kwargs):
-        """Updated save method with validation"""
-        if not self.pk:
-            if self.type == 'CLIENT':
-                self.client = self.product.client
-                self.base_amount = Decimal(
-                    str(self.product.price * self.product.quantity)).quantize(Decimal('0.01'))
-                self.tax_amount = Decimal(
-                    str(self.base_amount * Decimal('0.20'))).quantize(Decimal('0.01'))
-                self.total_amount = Decimal(
-                    str(self.base_amount + self.tax_amount)).quantize(Decimal('0.01'))
-                self.due_date = timezone.now() + timezone.timedelta(days=30)
-            else:
-                self.product = None
-                self.client = None
-                self.base_amount = Decimal('0.00')
-                self.tax_amount = Decimal('0.00')
-                self.total_amount = Decimal('0.00')
-                if not self.due_date:
-                    self.due_date = timezone.now() + timezone.timedelta(days=15)
-
+        """Override save to handle automatic calculations and QR code generation"""
         self.full_clean()
+
+        # Calculate amounts for CLIENT type factures
+        if self.type == 'CLIENT' and self.product:
+            if hasattr(self.product, 'price') and hasattr(self.product, 'quantity'):
+                # Calculate based on product price and quantity
+                self.base_amount = Decimal(
+                    str(self.product.price)) * Decimal(str(self.product.quantity))
+            elif hasattr(self.product, 'total_price'):
+                # Use total price from product
+                self.base_amount = Decimal(str(self.product.total_price))
+            else:
+                # Fallback to a default calculation or existing value
+                if not self.base_amount:
+                    self.base_amount = Decimal('0.00')
+
+            # Calculate tax (20% for Tunisia)
+            self.tax_amount = self.base_amount * Decimal('0.20')
+            self.total_amount = self.base_amount + self.tax_amount
+
+        # For non-CLIENT factures, ensure calculations are done if base_amount exists
+        elif self.base_amount and self.type != 'CLIENT':
+            if not self.tax_amount:
+                self.tax_amount = self.base_amount * Decimal('0.20')
+            if not self.total_amount:
+                self.total_amount = self.base_amount + self.tax_amount
+
+        # Set due date if not provided
+        if not self.due_date:
+            self.due_date = timezone.now().date() + timezone.timedelta(days=15)
+
         super().save(*args, **kwargs)
 
-    def create(self, validated_data):
-        if validated_data.get('type') != 'CLIENT' and 'due_date' not in validated_data:
-            validated_data['due_date'] = (
-                timezone.now() + timezone.timedelta(days=15)
-            ).date()
-        return super().create(validated_data)
+        # Generate QR code after saving (when we have an ID)
+        if self.type == 'CLIENT' and not self.qr_code:
+            try:
+                self.generate_qr_code()
+                # Save again to update QR code field without triggering recursion
+                super(Facture, self).save(update_fields=['qr_code'])
+            except Exception as e:
+                logger.error(
+                    f"Failed to generate QR code for facture {self.id}: {str(e)}")
 
-
-@receiver(post_save, sender=Facture)
-def generate_qr_code(sender, instance, created, **kwargs):
-    if created and not instance.qr_code:
-        instance.generate_qr_code()
-        instance.save()
-
-
-@receiver(post_save, sender=Facture)
-def generate_non_client_pdf(sender, instance, created, **kwargs):
-    if created and instance.type != 'CLIENT' and instance.image:
-        import img2pdf
-        from django.core.files.base import ContentFile
+    def generate_qr_code(self):
+        """Generate QR code for payment"""
+        if not self.id:
+            logger.warning("Cannot generate QR code for unsaved facture")
+            return
 
         try:
-            image_file = instance.image.open()
-            pdf_bytes = img2pdf.convert(image_file.read())
-            image_file.close()
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
 
-            pdf_name = f"facture_{instance.id}.pdf"
-            instance.pdf_file.save(pdf_name, ContentFile(pdf_bytes), save=True)
+            data = {
+                "facture_id": self.id,
+                "uuid": str(self.payment_uuid),
+                "amount": str(self.total_amount),
+                "currency": "TND",  # Tunisian Dinar
+                "type": self.type,
+                "issue_date": self.issue_date.isoformat(),
+            }
 
-            instance.save()
+            qr.add_data(json.dumps(data))
+            qr.make(fit=True)
+
+            img = qr.make_image(fill_color="black", back_color="white")
+            buffer = BytesIO()
+            img.save(buffer, format='PNG')
+            buffer.seek(0)
+
+            self.qr_code.save(
+                f'facture_{self.id}_qr.png',
+                File(buffer),
+                save=False
+            )
+            logger.info(
+                f"QR code generated successfully for facture {self.id}")
+
         except Exception as e:
-            print(f"Error generating PDF: {e}")
+            logger.error(
+                f"Error generating QR code for facture {self.id}: {str(e)}")
+            raise
+
+    def generate_client_pdf(self):
+        """Generate professional PDF for CLIENT factures using ReportLab"""
+        if self.type != 'CLIENT':
+            logger.warning(
+                f"PDF generation only available for CLIENT factures, got {self.type}")
+            return
+
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.units import mm
+            from reportlab.lib.colors import black, grey, darkblue
+            from django.core.files.base import ContentFile
+
+            buffer = BytesIO()
+            p = canvas.Canvas(buffer, pagesize=A4)
+            width, height = A4
+
+            # Company header
+            p.setFont("Helvetica-Bold", 16)
+            p.drawRightString(width - 40, height - 40, "Facture")
+
+            p.setFont("Helvetica-Bold", 12)
+            p.drawRightString(width - 40, height - 60, "Nom de l'usine")
+
+            p.setFont("Helvetica", 9)
+            p.drawRightString(width - 40, height - 75, "REG: 12300012300")
+            p.drawRightString(width - 40, height - 90,
+                              "ma3melFoulen@gmail.com | +216 33 524 415")
+
+            # Client section
+            if self.client:
+                p.setFont("Helvetica-Bold", 12)
+                client_name = self.client.get_full_name() if hasattr(
+                    self.client, 'get_full_name') else str(self.client)
+                p.drawRightString(width - 40, height - 120, client_name)
+
+            # Invoice details
+            p.setFont("Helvetica", 9)
+            p.drawString(40, height - 140,
+                         f"NUMÉRO DE FACTURE : FAC-{self.id:04d}")
+            p.drawString(
+                40, height - 155, f"DATE DE FACTURE : {self.issue_date.strftime('%d %b %Y')}")
+            p.drawString(
+                40, height - 170, f"DATE D'ÉCHÉANCE : {self.due_date.strftime('%d %b %Y')}")
+
+            # Products table header
+            y_pos = height - 220
+            p.setFillColorRGB(0.8, 0.8, 1.0)  # Light blue background
+            p.rect(40, y_pos - 15, width - 80, 25, fill=1, stroke=1)
+            p.setFillColorRGB(0, 0, 0)  # Black text
+
+            p.setFont("Helvetica-Bold", 10)
+            col_widths = [120, 80, 80, 80, 80]
+            headers = ["Produit", "Quantité",
+                       "Production", "Prix Unitaire", "Total"]
+            x_pos = 50
+
+            for i, header in enumerate(headers):
+                p.drawString(x_pos, y_pos - 5, header)
+                x_pos += col_widths[i]
+
+            # Product details
+            y_pos -= 30
+            p.setFont("Helvetica", 9)
+            if self.product:
+                product_name = getattr(
+                    self.product, 'name', f'Product {self.product.id}')
+                quantity = getattr(self.product, 'quantity', 1)
+                price = getattr(self.product, 'price', self.base_amount)
+
+                x_pos = 50
+                p.drawString(x_pos, y_pos, product_name)
+                x_pos += col_widths[0]
+                p.drawString(x_pos, y_pos, f"{quantity} Kg")
+                x_pos += col_widths[1]
+                p.drawString(x_pos, y_pos, f"{quantity} L")
+                x_pos += col_widths[2]
+                p.drawString(x_pos, y_pos, f"{price} DT")
+                x_pos += col_widths[3]
+                p.drawString(x_pos, y_pos, f"{self.base_amount} DT")
+
+            # Totals section
+            y_pos = height - 400
+            p.setFont("Helvetica", 10)
+
+            totals_x = width - 200
+            p.drawString(totals_x, y_pos, f"Sous-total: {self.base_amount} DT")
+            y_pos -= 20
+            p.drawString(totals_x, y_pos, f"TVA (20%): {self.tax_amount} DT")
+            y_pos -= 20
+            p.setFont("Helvetica-Bold", 12)
+            p.drawString(totals_x, y_pos, f"Total: {self.total_amount} DT")
+
+            # Payment instructions
+            y_pos -= 60
+            p.setFont("Helvetica", 9)
+            payment_text = [
+                "INSTRUCTIONS DE PAIEMENT",
+                "",
+                "Nom de l'usine",
+                "SWIFT/IBAN: NZ0201230012",
+                "Numéro de compte: 12-1234-1234256-12",
+                "",
+                "Pour toute question, veuillez nous contacter :",
+                "ma3melFoulen@gmail.com | +216 33 524 415"
+            ]
+
+            for line in payment_text:
+                if line == "INSTRUCTIONS DE PAIEMENT":
+                    p.setFont("Helvetica-Bold", 10)
+                else:
+                    p.setFont("Helvetica", 9)
+                p.drawString(40, y_pos, line)
+                y_pos -= 15
+
+            # Add QR code if available
+            if self.qr_code and os.path.exists(self.qr_code.path):
+                try:
+                    p.drawImage(self.qr_code.path, width -
+                                150, 50, width=80, height=80)
+                except Exception as e:
+                    logger.warning(f"Could not add QR code to PDF: {str(e)}")
+
+            p.showPage()
+            p.save()
+            buffer.seek(0)
+
+            # Save PDF to model
+            pdf_content = ContentFile(buffer.getvalue())
+            self.pdf_file.save(
+                f'facture_{self.id}_client.pdf',
+                pdf_content,
+                save=False
+            )
+
+            logger.info(f"PDF generated successfully for facture {self.id}")
+
+        except Exception as e:
+            logger.error(
+                f"Error generating PDF for facture {self.id}: {str(e)}")
+            raise
+
+    def mark_as_paid(self):
+        """Mark facture as paid and set payment date"""
+        self.status = 'paid'
+        self.payment_date = timezone.now()
+        self.save(update_fields=['status', 'payment_date'])
+        logger.info(f"Facture {self.id} marked as paid")
+
+    def mark_as_overdue(self):
+        """Mark facture as overdue if past due date and unpaid"""
+        if self.status == 'unpaid' and self.due_date < timezone.now().date():
+            self.status = 'overdue'
+            self.save(update_fields=['status'])
+            logger.info(f"Facture {self.id} marked as overdue")
+
+    @property
+    def is_overdue(self):
+        """Check if facture is overdue"""
+        return (self.status in ['unpaid', 'overdue'] and
+                self.due_date < timezone.now().date())
+
+    @property
+    def days_until_due(self):
+        """Calculate days until due date"""
+        delta = self.due_date - timezone.now().date()
+        return delta.days
+
+    def __repr__(self):
+        return f"<Facture(id={self.id}, type={self.type}, status={self.status}, amount={self.total_amount})>"
