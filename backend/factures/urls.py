@@ -1,22 +1,10 @@
-from django.urls import path
-from .views import (
-    FactureListView,
-    FactureDetailView,
-    FactureStatusView,
-    FacturePDFView,
-    QRCodeValidationView,
-    QRCodePaymentView,
-    FactureCreateView,
-    handle_invoice_upload
-)
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import FactureViewSet
+
+router = DefaultRouter()
+router.register(r'factures', FactureViewSet, basename='facture')
 
 urlpatterns = [
-    path('', FactureListView.as_view(), name='facture-list'),
-    path('create/', FactureCreateView.as_view(), name='facture-create'),
-    path('upload/', handle_invoice_upload, name='invoice_upload'),
-    path('<int:pk>/', FactureDetailView.as_view(), name='facture-detail'),
-    path('<int:pk>/status/', FactureStatusView.as_view(), name='facture-status'),
-    path('<int:pk>/pdf/', FacturePDFView.as_view(), name='facture-pdf'),
-    path('qr/validate/', QRCodeValidationView.as_view(), name='qr-validation'),
-    path('qr/pay/', QRCodePaymentView.as_view(), name='qr-payment'),
+    path('', include(router.urls)),
 ]

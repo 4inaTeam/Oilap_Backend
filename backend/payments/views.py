@@ -1,134 +1,169 @@
-import stripe
-from django.conf import settings
-from django.http import HttpResponse
-from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
-from rest_framework import generics, status
+from decimal import Decimal
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
-from factures.models import Facture
+from django.conf import settings
+import stripe
 from .models import Payment
-from .serializers import PaymentIntentSerializer, PaymentSerializer
+from factures.models import Facture
+from .serializers import PaymentSerializer
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-class CreatePaymentIntentView(generics.CreateAPIView):
-    serializer_class = PaymentIntentSerializer
+
+class PaymentViewSet(viewsets.ModelViewSet):
+    serializer_class = PaymentSerializer
     permission_classes = [IsAuthenticated]
 
-    def create(self, request, *args, **kwargs):
-        ser = self.get_serializer(data=request.data)
-        ser.is_valid(raise_exception=True)
+    def get_queryset(self):
+        user = self.request.user
+        if user.role in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
+            return Payment.objects.all()
+        else:
+            return Payment.objects.filter(facture__client=user)
 
-        facture_id = ser.validated_data['facture_id']
-        return_url = ser.validated_data.get('return_url')
-
+    @action(detail=False, methods=['post'])
+    def create_stripe_payment(self, request):
+        """Create Stripe payment for a facture"""
         try:
-            facture = Facture.objects.get(
-                id=facture_id,
-                client=request.user
-            )
-        except Facture.DoesNotExist:
-            return Response(
-                {'error': 'Facture non trouvée'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            facture_id = request.data.get('facture_id')
+            facture = Facture.objects.get(id=facture_id)
 
-        try:
-            intent_data = {
-                'amount': int(facture.total_amount), 
-                'currency': 'tnd',
-                'payment_method_types': ['card'],
-                'metadata': {
+            # Check if user has permission
+            if request.user.role not in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT'] and facture.client != request.user:
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            # Add minimum amount validation
+            min_amount = Decimal('0.50')  # $0.50 minimum for USD
+            if facture.final_total < min_amount:
+                return Response({
+                    'error': f'Amount must be at least ${min_amount}. Current amount: ${facture.final_total}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create payment intent with restricted payment methods to avoid redirects
+            intent = stripe.PaymentIntent.create(
+                amount=int(facture.final_total * 100),  # Convert to cents
+                currency='usd',
+                # Method 1: Use automatic payment methods but disable redirects
+                automatic_payment_methods={
+                    'enabled': True,
+                    'allow_redirects': 'never'
+                },
+                metadata={
                     'facture_id': facture.id,
-                    'user_id': request.user.id
+                    'facture_number': facture.facture_number,
+                    'client_id': facture.client.id
                 }
-            }
-            if return_url:
-                intent_data['return_url'] = return_url
+            )
 
-            payment_intent = stripe.PaymentIntent.create(**intent_data)
+            # Create payment record
+            payment = Payment.objects.create(
+                facture=facture,
+                amount=facture.final_total,
+                payment_method='stripe',
+                stripe_payment_intent_id=intent.id,
+                status='pending'
+            )
+
+            return Response({
+                'payment_id': payment.id,
+                'client_secret': intent.client_secret,
+                'payment_intent_id': intent.id,
+                'amount': facture.final_total
+            })
+
+        except Facture.DoesNotExist:
+            return Response({'error': 'Facture not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def create_stripe_payment_card_only(self, request):
+        """Create Stripe payment for a facture - Card payments only (alternative method)"""
+        try:
+            facture_id = request.data.get('facture_id')
+            facture = Facture.objects.get(id=facture_id)
+
+            # Check if user has permission
+            if request.user.role not in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT'] and facture.client != request.user:
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            # Add minimum amount validation
+            min_amount = Decimal('0.50')  # $0.50 minimum for USD
+            if facture.final_total < min_amount:
+                return Response({
+                    'error': f'Amount must be at least ${min_amount}. Current amount: ${facture.final_total}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Method 2: Use only card payment methods (no redirects possible)
+            intent = stripe.PaymentIntent.create(
+                amount=int(facture.final_total * 100),  # Convert to cents
+                currency='usd',
+                payment_method_types=['card'],  # Only allow card payments
+                metadata={
+                    'facture_id': facture.id,
+                    'facture_number': facture.facture_number,
+                    'client_id': facture.client.id
+                }
+            )
+
+            # Create payment record
+            payment = Payment.objects.create(
+                facture=facture,
+                amount=facture.final_total,
+                payment_method='stripe',
+                stripe_payment_intent_id=intent.id,
+                status='pending'
+            )
+
+            return Response({
+                'payment_id': payment.id,
+                'client_secret': intent.client_secret,
+                'payment_intent_id': intent.id,
+                'amount': facture.final_total
+            })
+
+        except Facture.DoesNotExist:
+            return Response({'error': 'Facture not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def confirm_payment(self, request):
+        """Confirm a Stripe payment"""
+        try:
+            payment_intent_id = request.data.get('payment_intent_id')
+            payment_method_id = request.data.get('payment_method_id')
+
+            # Confirm the payment intent
+            intent = stripe.PaymentIntent.confirm(
+                payment_intent_id,
+                payment_method=payment_method_id
+            )
+
+            # Update payment record
+            try:
+                payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
+                if intent.status == 'succeeded':
+                    payment.status = 'completed'
+                    # Update facture status to paid
+                    payment.facture.payment_status = 'PAID'
+                    payment.facture.save()
+                elif intent.status == 'requires_action':
+                    payment.status = 'requires_action'
+                else:
+                    payment.status = 'failed'
+                payment.save()
+            except Payment.DoesNotExist:
+                pass
+
+            return Response({
+                'status': intent.status,
+                'client_secret': intent.client_secret if intent.status == 'requires_action' else None
+            })
 
         except stripe.error.StripeError as e:
-            msg = getattr(e, 'user_message', str(e))
-            return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
-
-
-        Payment.objects.create(
-            facture=facture,
-            stripe_payment_intent=payment_intent.id,
-            amount=facture.total_amount,
-            currency=payment_intent.currency.upper()
-        )
-
-        return Response({'clientSecret': payment_intent.client_secret})
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def confirm_payment(request):
-    payment_intent_id = request.data.get('payment_intent_id')
-    
-    try:
-        payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
-        payment = Payment.objects.get(stripe_payment_intent=payment_intent_id)
-        
-        if payment_intent.status == 'succeeded':
-            payment.status = 'succeeded'
-            payment.facture.status = 'paid'
-            payment.facture.payment_date = timezone.now()
-            payment.facture.save()
-            payment.save()
-            
-            return Response({'status': 'payment_succeeded'})
-            
-        return Response({'status': payment_intent.status})
-    
-    except Payment.DoesNotExist:
-        return Response(
-            {'error': 'Paiement non trouvé'}, 
-            status=status.HTTP_404_NOT_FOUND
-        )
-    except Exception as e:
-        return Response(
-            {'error': str(e)}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-@csrf_exempt
-@api_view(['POST'])
-def stripe_webhook(request):
-    payload = request.body
-    sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', '')
-    
-    try:
-        event = stripe.Webhook.construct_event(
-            payload,
-            sig_header,
-            settings.STRIPE_WEBHOOK_SECRET
-        )
-    except ValueError as e:
-        return HttpResponse(status=400)
-    except stripe.error.SignatureVerificationError as e:
-        return HttpResponse(status=400)
-
-    if event['type'] == 'payment_intent.succeeded':
-        payment_intent = event['data']['object']
-    
-        try:
-            payment = Payment.objects.get(
-                stripe_payment_intent=payment_intent['id']
-            )
-            payment.status = 'succeeded'
-            payment.save()
-            
-            facture = payment.facture
-            facture.status = 'paid' 
-            facture.payment_date = timezone.now()
-            facture.save()
-            # TODO: Ajouter une notification Firebase ici
-        
-        except Payment.DoesNotExist:
-            pass
-
-    return HttpResponse(status=200)
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
