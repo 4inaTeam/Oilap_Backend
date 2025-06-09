@@ -1,28 +1,25 @@
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.lib.units import inch, cm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.units import inch, mm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+from reportlab.lib.colors import darkblue
 from io import BytesIO
 import os
 from django.conf import settings
-from datetime import datetime
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-from django.core.files.uploadedfile import InMemoryUploadedFile
-import tempfile
 import qrcode
-from decimal import Decimal
 import logging
+import io
+from decimal import Decimal
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
 
 def generate_qr_code(data):
-    """Generate QR code and return as BytesIO"""
+    """Generate QR code and return as BytesIO buffer"""
     try:
         qr = qrcode.QRCode(
             version=1,
@@ -34,12 +31,9 @@ def generate_qr_code(data):
         qr.make(fit=True)
 
         qr_img = qr.make_image(fill_color="black", back_color="white")
-
-        # Save to BytesIO
         qr_buffer = BytesIO()
         qr_img.save(qr_buffer, format='PNG')
         qr_buffer.seek(0)
-
         return qr_buffer
     except Exception as e:
         logger.error(f"Error generating QR code: {str(e)}")
@@ -47,235 +41,231 @@ def generate_qr_code(data):
 
 
 def generate_facture_pdf(facture):
-    """Generate PDF for facture and return BytesIO buffer"""
+    """Generate professional PDF with proper data access"""
     try:
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1 *
-                                inch, rightMargin=0.5*inch, leftMargin=0.5*inch)
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4,
+                                topMargin=20*mm, bottomMargin=20*mm)
         story = []
+
+        # Styles
         styles = getSampleStyleSheet()
 
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=24,
-            spaceAfter=30,
-            alignment=TA_RIGHT
-        )
+        # Debug: Log facture information
+        logger.info(
+            f"Generating PDF for facture ID: {facture.id}, Number: {getattr(facture, 'facture_number', 'N/A')}")
 
-        header_style = ParagraphStyle(
-            'HeaderStyle',
-            parent=styles['Normal'],
-            fontSize=10,
-            alignment=TA_RIGHT
-        )
+        # Get client information safely
+        client_name = "N/A"
+        client_email = "N/A"
+        if hasattr(facture, 'client') and facture.client:
+            if hasattr(facture.client, 'get_full_name'):
+                client_name = facture.client.get_full_name() or facture.client.username
+            else:
+                client_name = facture.client.username
+            client_email = getattr(facture.client, 'email', 'N/A')
 
-        story.append(Paragraph("Facture", title_style))
+        logger.info(
+            f"Client info - Name: {client_name}, Email: {client_email}")
 
-        company_info = """
-        <b>Nom de l'usine</b><br/>
-        REG: 123000123000<br/>
-        ma3melFoulen@gmail.com | +216 33 524 415
-        """
-        story.append(Paragraph(company_info, header_style))
-        story.append(Spacer(1, 20))
-
-        # Safe access to client info
-        client_name = getattr(facture.client, 'username', 'N/A') if facture.client else 'N/A'
-        
-        client_info_data = [
-            ['', 'Nom de client'],
-            ['NUMÉRO DE FACTURE :', str(facture.facture_number)],
-            ['DATE DE FACTURE :', facture.created_at.strftime('%d %b %Y')],
+        # Company header with REAL data
+        header_data = [
+            ['', 'Facture'],
+            ['', 'Nom de l\'usine'],
+            ['', 'REG: 12300012300'],
+            ['', 'ma3melFoulen@gmail.com | +216 33 524 415'],
+            ['', ''],
+            ['', f'Client: {client_name}'],
+            ['', f'Email: {client_email}'],
+            [f'NUMÉRO DE FACTURE :', f'{facture.facture_number}'],
+            [f'DATE DE FACTURE :', facture.created_at.strftime('%d %b %Y')],
         ]
 
-        client_table = Table(client_info_data, colWidths=[3*inch, 2*inch])
-        client_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
+        header_table = Table(header_data, colWidths=[3*inch, 3*inch])
+        header_table.setStyle(TableStyle([
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
             ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (1, 0), (1, 0), 16),
+            ('FONTNAME', (1, 1), (1, 4), 'Helvetica'),
+            ('FONTSIZE', (1, 1), (1, 4), 9),
+            ('FONTNAME', (1, 5), (1, 6), 'Helvetica-Bold'),
+            ('FONTSIZE', (1, 5), (1, 6), 10),
+            ('FONTNAME', (0, 7), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 7), (-1, -1), 9),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
 
-        story.append(client_table)
+        story.append(header_table)
         story.append(Spacer(1, 30))
 
-        # Products table with better error handling
-        products_data = [['Produit', 'Quantité',
-                          'Production', 'Prix Unitaire', 'Total']]
+        # Products table with CORRECT data access
+        product_data = [
+            ['Produit', 'Quantité', 'Production', 'Prix Unitaire', 'Total']
+        ]
 
-        # Check if facture has products
-        if hasattr(facture, 'products') and facture.products.exists():
-            products = facture.products.filter(status='done')
-            
-            if products.exists():
-                for product in products:
-                    try:
-                        # Safe decimal conversion with error handling
-                        quantity = Decimal(str(product.quantity)) if product.quantity else Decimal('0')
-                        price = Decimal(str(product.price)) if product.price else Decimal('0')
-                        
-                        if quantity > 0:
-                            unit_price = price / quantity
-                        else:
-                            unit_price = price
-                            
-                        total_price = price  # Total price is already the total, not price * quantity
+        # FORCE facture to recalculate totals before PDF generation
+        facture.calculate_totals()
 
-                        # Safe access to product attributes
-                        product_name = getattr(product, 'quality', 'N/A')
-                        if hasattr(product_name, 'title'):
-                            product_name = product_name.title()
-                        else:
-                            product_name = str(product_name)
+        logger.info(
+            f"Facture totals after recalculation - Total: {facture.total_amount}, TVA: {facture.tva_amount}, Final: {facture.final_total}")
 
-                        products_data.append([
-                            product_name,
-                            f"{quantity} Kg",
-                            "120 L",  # You might want to make this dynamic
-                            f"{unit_price:.2f} DT",
-                            f"{total_price:.2f} DT"
+        # Access products correctly
+        if hasattr(facture, 'products'):
+            try:
+                # Get only products that are 'done' and linked to this facture
+                products = facture.products.filter(status='done')
+                product_count = products.count()
+                logger.info(
+                    f"Found {product_count} done products for facture {facture.facture_number}")
+
+                if product_count > 0:
+                    for product in products:
+                        logger.info(f"Processing product ID: {product.id}, Quality: {product.quality}, "
+                                    f"Quantity: {product.quantity}, Price: {product.price}, Status: {product.status}")
+
+                        quantity = product.quantity
+                        # product.price is already the total price (base_price * quantity)
+                        total_price = Decimal(str(product.price))
+
+                        # Calculate unit price from total price and quantity
+                        unit_price = total_price / \
+                            quantity if quantity > 0 else Decimal('0')
+
+                        # Get quality display name
+                        quality_display = dict(product.QUALITY_CHOICES).get(
+                            product.quality, product.quality)
+
+                        # Build product description
+                        product_description = f'Qualité {quality_display}'
+                        if product.origine:
+                            product_description += f' - {product.origine}'
+
+                        product_data.append([
+                            product_description,
+                            f'{quantity} Kg',
+                            f'{quantity} L',
+                            f'{unit_price:.2f} DT',
+                            f'{total_price:.2f} DT'
                         ])
-                    except Exception as e:
-                        logger.error(f"Error processing product {product.id}: {str(e)}")
-                        continue
-            else:
-                products_data.append(['Aucun produit trouvé', '', '', '', ''])
-        else:
-            products_data.append(['Aucun produit trouvé', '', '', '', ''])
 
-        products_table = Table(products_data, colWidths=[
-                               1.5*inch, 1*inch, 1*inch, 1*inch, 1*inch])
-        products_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                        logger.info(
+                            f"Added product to PDF: {product_description}, Total: {total_price}")
+                else:
+                    logger.warning("No done products found for this facture")
+                    product_data.append(
+                        ['Aucun produit', '0 Kg', '0 L', '0.00 DT', '0.00 DT'])
+
+            except Exception as e:
+                logger.error(
+                    f"Error accessing products: {str(e)}", exc_info=True)
+                product_data.append(
+                    ['Erreur produit', '0 Kg', '0 L', '0.00 DT', '0.00 DT'])
+        else:
+            logger.error("Facture object does not have 'products' attribute")
+            product_data.append(
+                ['Aucun produit trouvé', '0 Kg', '0 L', '0.00 DT', '0.00 DT'])
+
+        product_table = Table(product_data, colWidths=[
+                              2*inch, 1*inch, 1*inch, 1*inch, 1*inch])
+        product_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
             ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('FONTSIZE', (0, 1), (-1, -1), 9),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
         ]))
 
-        story.append(products_table)
-        story.append(Spacer(1, 30))
+        story.append(product_table)
+        story.append(Spacer(1, 40))
 
-        # Create QR code with error handling
-        qr_data = f"Facture: {facture.facture_number}\nClient: {client_name}\nMontant: {facture.final_total} DT\nDate: {facture.created_at.strftime('%d/%m/%Y')}"
-        qr_buffer = generate_qr_code(qr_data)
+        # Use the facture's calculated totals directly
+        total_amount = facture.total_amount
+        tva_amount = facture.tva_amount
+        final_total = facture.final_total
 
-        # Save QR code to temporary file
-        qr_temp_path = None
-        qr_image = None
+        logger.info(
+            f"Using facture totals - Base: {total_amount}, TVA: {tva_amount}, Final: {final_total}")
 
-        if qr_buffer:
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
-                    tmp_file.write(qr_buffer.getvalue())
-                    qr_temp_path = tmp_file.name
-
-                qr_image = Image(qr_temp_path, width=1.5*inch, height=1.5*inch)
-            except Exception as e:
-                logger.error(f"Error creating QR code image: {str(e)}")
-
-        # Create signature and totals section with QR code
-        # Safe access to facture financial fields
-        total_amount = getattr(facture, 'total_amount', 0) or 0
-        tva_amount = getattr(facture, 'tva_amount', 0) or 0
-        credit_card_fee = getattr(facture, 'credit_card_fee', 0) or 0
-        final_total = getattr(facture, 'final_total', 0) or 0
-        
-        totals_data = [
-            ['Total', f"{total_amount:.2f} DT"],
-            ['TVA', f"{tva_amount:.2f} DT"],
-            ['Frais de carte de crédit (si utilisée) :', f"{credit_card_fee:.2f} DT"],
-            ['', ''],
-            ['Prix Total:', f"{final_total:.2f} DT"],
+        # Signature and totals section with REAL data
+        signature_totals_data = [
+            ['Signature', '', 'Total', f'{total_amount:.2f} DT'],
+            ['', '', 'TVA', f'{tva_amount:.2f} DT'],
+            ['', '', 'Prix Total:', f'{final_total:.2f} DT'],
         ]
 
-        # Create totals table
-        totals_table = Table(totals_data, colWidths=[3*inch, 1.5*inch])
-        totals_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('FONTNAME', (1, -1), (1, -1), 'Helvetica-Bold'),
-            ('LINEABOVE', (1, -1), (1, -1), 1, colors.black),
-            ('LINEBELOW', (1, -1), (1, -1), 1, colors.black),
-            ('GRID', (0, 0), (1, -2), 1, colors.black),
-            ('BACKGROUND', (0, 0), (1, -2), colors.lightgrey),
+        signature_table = Table(signature_totals_data, colWidths=[
+                                2*inch, 1.5*inch, 1.5*inch, 1*inch])
+        signature_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (0, 0), 12),
+            ('FONTNAME', (2, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (2, 0), (-1, -1), 10),
+            ('FONTNAME', (2, -1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (2, -1), (-1, -1), 12),
+            ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('BOX', (2, 0), (-1, -1), 1, colors.black),
+            ('BACKGROUND', (2, -1), (-1, -1), colors.lightgrey),
         ]))
 
-        # Combine signature, QR code, and totals
-        if qr_image:
-            signature_section_data = [
-                ['Signature', totals_table],
-                [qr_image, '']
-            ]
+        story.append(signature_table)
+        story.append(Spacer(1, 40))
 
-            signature_section = Table(
-                signature_section_data, colWidths=[2.5*inch, 4*inch])
-            signature_section.setStyle(TableStyle([
-                ('ALIGN', (0, 0), (0, 0), 'CENTER'),
-                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('FONTSIZE', (0, 0), (0, 0), 12),
-                ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
-            ]))
-
-            story.append(signature_section)
-        else:
-            # Fallback without QR code
-            story.append(Paragraph("Signature", styles['Normal']))
-            story.append(Spacer(1, 20))
-            story.append(totals_table)
-
-        # Clean up temporary QR code file
-        if qr_temp_path and os.path.exists(qr_temp_path):
-            try:
-                os.unlink(qr_temp_path)
-            except Exception as e:
-                logger.error(f"Error deleting temp QR file: {str(e)}")
-
-        story.append(Spacer(1, 50))
-
+        # Payment instructions
         payment_info = """
-        <b>INSTRUCTIONS DE PAIEMENT</b><br/>
-        Nom de l'usine<br/>
-        Nom de la banque : ATB<br/>
-        SWIFT/IBAN: NZ0201230012<br/>
-        Numéro de compte: 12-1234-1234556-12<br/><br/>
+        INSTRUCTIONS DE PAIEMENT
+        
+        Nom de l'usine
+        Nom de la banque : ATB
+        SWIFT/IBAN: NZ0201230012
+        Numéro de compte: 12-1234-1234566-12
+        
         Pour toute question, veuillez nous contacter : ma3melFoulen@gmail.com | +216 33 524 415
         """
 
-        payment_style = ParagraphStyle(
-            'PaymentStyle',
-            parent=styles['Normal'],
-            fontSize=9,
-            alignment=TA_LEFT
-        )
+        payment_para = Paragraph(payment_info, styles['Normal'])
 
-        story.append(Paragraph(payment_info, payment_style))
+        # Generate QR code with REAL facture data
+        qr_data = f"Facture: {facture.facture_number}\nMontant: {final_total:.2f} DT\nClient: {client_name}\nDate: {facture.created_at.strftime('%Y-%m-%d')}"
+        qr_buffer = generate_qr_code(qr_data)
 
-        # Build the PDF
+        if qr_buffer:
+            qr_image = RLImage(qr_buffer, width=1*inch, height=1*inch)
+            footer_table = Table([[payment_para, qr_image]],
+                                 colWidths=[4.5*inch, 1.5*inch])
+            footer_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+            ]))
+            story.append(footer_table)
+        else:
+            story.append(payment_para)
+
+        # Build PDF
         doc.build(story)
         buffer.seek(0)
-        logger.info(f"PDF generated successfully for facture {facture.facture_number}")
+
+        logger.info(
+            f"PDF generated successfully for facture {facture.facture_number}")
         return buffer
 
     except Exception as e:
-        logger.error(f"Error generating PDF for facture {facture.id}: {str(e)}")
-        raise
+        logger.error(f"Error generating PDF: {str(e)}", exc_info=True)
+        return None
 
 
 def upload_pdf_to_cloudinary(pdf_buffer, public_id):
     """Upload PDF buffer to Cloudinary"""
     try:
-        # Ensure cloudinary is configured
         if not hasattr(settings, 'CLOUDINARY_STORAGE') and not cloudinary.config().cloud_name:
             logger.error("Cloudinary not configured properly")
             return None
-            
+
         pdf_buffer.seek(0)
 
         response = cloudinary.uploader.upload(
@@ -285,10 +275,13 @@ def upload_pdf_to_cloudinary(pdf_buffer, public_id):
             format="pdf",
             overwrite=True,
             folder="factures",
-            tags=["facture", "pdf"]
+            tags=["facture", "pdf"],
+            type="upload",
+            invalidate=True,
         )
 
-        logger.info(f"PDF uploaded to Cloudinary: {response.get('secure_url')}")
+        logger.info(
+            f"PDF uploaded to Cloudinary: {response.get('secure_url')}")
         return response
     except Exception as e:
         logger.error(f"Error uploading to Cloudinary: {str(e)}")
@@ -296,44 +289,55 @@ def upload_pdf_to_cloudinary(pdf_buffer, public_id):
 
 
 def generate_and_upload_facture_pdf(facture, force_regenerate=False):
-    """Generate PDF and upload to Cloudinary"""
+    """Main function to generate PDF and upload to Cloudinary"""
     try:
-        # Check if PDF already exists and we don't want to force regenerate
+        # Check if PDF already exists
         if hasattr(facture, 'pdf_url') and facture.pdf_url and not force_regenerate:
-            logger.info(f"PDF already exists for facture {facture.facture_number}")
+            logger.info(
+                f"PDF already exists for facture {getattr(facture, 'facture_number', facture.id)}")
             return facture.pdf_url
 
-        logger.info(f"Generating PDF for facture {facture.facture_number}")
+        facture_number = getattr(
+            facture, 'facture_number', f'FAC-{facture.id:04d}')
+        logger.info(f"Generating PDF for facture {facture_number}")
+
+        # Debug: Log facture data before PDF generation
+        logger.info(f"Facture data - ID: {facture.id}, Client: {facture.client}, "
+                    f"Total: {facture.total_amount}, Products count: {facture.products.count() if hasattr(facture, 'products') else 'N/A'}")
+
+        # Generate PDF
         pdf_buffer = generate_facture_pdf(facture)
+        if not pdf_buffer:
+            logger.error("Failed to generate PDF buffer")
+            return None
 
-        public_id = f"facture_{facture.facture_number}_{facture.id}"
-
+        # Upload to Cloudinary
+        public_id = f"facture_{facture_number}_{facture.id}"
         upload_response = upload_pdf_to_cloudinary(pdf_buffer, public_id)
 
         if upload_response and upload_response.get('secure_url'):
-            # Update facture with PDF info
+            # Update facture with PDF URL
             facture.pdf_url = upload_response['secure_url']
             facture.pdf_public_id = upload_response['public_id']
             facture.save(update_fields=['pdf_url', 'pdf_public_id'])
 
-            logger.info(f"PDF successfully generated and uploaded for facture {facture.facture_number}")
+            logger.info(
+                f"PDF successfully generated and uploaded for facture {facture_number}")
             return upload_response['secure_url']
         else:
             logger.error("Failed to upload PDF to Cloudinary")
             return None
 
     except Exception as e:
-        logger.error(f"Error generating and uploading PDF: {str(e)}")
+        logger.error(
+            f"Error generating and uploading PDF: {str(e)}", exc_info=True)
         return None
 
 
 def delete_pdf_from_cloudinary(public_id):
     """Delete PDF from Cloudinary"""
     try:
-        response = cloudinary.uploader.destroy(
-            public_id,
-            resource_type="raw"
-        )
+        response = cloudinary.uploader.destroy(public_id, resource_type="raw")
         return response.get('result') == 'ok'
     except Exception as e:
         logger.error(f"Error deleting PDF from Cloudinary: {str(e)}")
@@ -341,12 +345,9 @@ def delete_pdf_from_cloudinary(public_id):
 
 
 def get_cloudinary_pdf_info(public_id):
-    """Get information about PDF from Cloudinary"""
+    """Get PDF information from Cloudinary"""
     try:
-        response = cloudinary.api.resource(
-            public_id,
-            resource_type="raw"
-        )
+        response = cloudinary.api.resource(public_id, resource_type="raw")
         return response
     except Exception as e:
         logger.error(f"Error getting PDF info from Cloudinary: {str(e)}")

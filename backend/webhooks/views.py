@@ -74,7 +74,6 @@ def handle_payment_success(payment_intent):
     payment_intent_id = payment_intent['id']
     
     try:
-        # Get payment record
         payment = Payment.objects.get(
             stripe_payment_intent_id=payment_intent_id
         )
@@ -85,8 +84,13 @@ def handle_payment_success(payment_intent):
         
         # Update facture status
         facture = payment.facture
-        facture.payment_status = 'PAID'
+        facture.payment_status = 'paid'
         facture.save()
+        
+        # Update all products associated with this facture
+        if hasattr(facture, 'products') and facture.products.exists():
+            facture.products.all().update(payement='paid', status='done')
+            logger.info(f'Updated payment status for {facture.products.count()} products')
         
         logger.info(f'Payment succeeded for facture {facture.facture_number}')
         logger.info(f'Amount: ${payment_intent["amount_received"] / 100}')
@@ -111,10 +115,15 @@ def handle_payment_failure(payment_intent):
         payment.status = 'failed'
         payment.save()
         
-        # Keep facture as unpaid
+        # Update facture and products status
         facture = payment.facture
-        facture.payment_status = 'UNPAID'
+        facture.payment_status = 'unpaid'
         facture.save()
+        
+        # Update all products to unpaid
+        if hasattr(facture, 'products') and facture.products.exists():
+            facture.products.all().update(payement='unpaid')
+            logger.info(f'Updated payment status to unpaid for {facture.products.count()} products')
         
         logger.info(f'Payment failed for facture {facture.facture_number}')
         
@@ -182,8 +191,13 @@ def create_payment_from_metadata(payment_intent):
         )
         
         if payment_intent['status'] == 'succeeded':
-            facture.payment_status = 'PAID'
+            facture.payment_status = 'paid'
             facture.save()
+            
+            # Update associated products
+            if hasattr(facture, 'products') and facture.products.exists():
+                facture.products.all().update(payement='paid', status='done')
+                logger.info(f'Updated payment status for {facture.products.count()} products')
             
         logger.info(f'Created missing payment record for facture {facture.facture_number}')
         

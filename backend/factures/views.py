@@ -11,7 +11,6 @@ from django.conf import settings
 import requests
 import logging
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -34,29 +33,34 @@ class FactureViewSet(viewsets.ModelViewSet):
 
         if response.status_code == status.HTTP_201_CREATED:
             try:
-                # Get the created facture
                 facture_id = response.data.get('id')
                 if facture_id:
                     facture = Facture.objects.get(id=facture_id)
-
-                    # Generate PDF automatically
+                    # Force immediate PDF generation
                     logger.info(
-                        f"Auto-generating PDF for newly created facture {facture.facture_number}")
-                    pdf_url = generate_and_upload_facture_pdf(facture)
+                        f"Starting PDF generation for facture {facture.facture_number}")
 
+                    # Generate PDF synchronously
+                    pdf_buffer = generate_facture_pdf(facture)
+                    if not pdf_buffer:
+                        raise Exception("PDF buffer is empty")
+
+                    # Upload to Cloudinary
+                    pdf_url = generate_and_upload_facture_pdf(facture)
                     if pdf_url:
-                        # Update response data with PDF URL
+                        facture.pdf_url = pdf_url
+                        facture.save()
                         response.data['pdf_url'] = pdf_url
                         logger.info(
-                            f"PDF auto-generated successfully for facture {facture.facture_number}")
+                            f"PDF generated and uploaded successfully: {pdf_url}")
                     else:
-                        logger.warning(
-                            f"Failed to auto-generate PDF for facture {facture.facture_number}")
+                        raise Exception("Failed to upload PDF to Cloudinary")
 
             except Exception as e:
                 logger.error(
-                    f"Error auto-generating PDF after facture creation: {str(e)}")
-                # Don't fail the creation, just log the error
+                    f"PDF Generation Error for facture {facture_id}: {str(e)}")
+                # Don't fail the whole request if PDF generation fails
+                response.data['pdf_generation_error'] = str(e)
 
         return response
 
@@ -68,19 +72,16 @@ class FactureViewSet(viewsets.ModelViewSet):
             logger.info(
                 f"Download PDF requested for facture {facture.facture_number}")
 
-            # If PDF exists on Cloudinary, redirect to it
             if hasattr(facture, 'pdf_url') and facture.pdf_url:
                 logger.info(f"Redirecting to existing PDF: {facture.pdf_url}")
                 return HttpResponseRedirect(facture.pdf_url)
 
-            # If no PDF exists, generate new one and upload to Cloudinary
             logger.info("No existing PDF found, generating new one")
             pdf_url = generate_and_upload_facture_pdf(facture)
             if pdf_url:
                 logger.info(f"New PDF generated, redirecting to: {pdf_url}")
                 return HttpResponseRedirect(pdf_url)
 
-            # Fallback: generate PDF directly and serve it
             logger.info("Cloudinary upload failed, serving PDF directly")
             pdf_buffer = generate_facture_pdf(facture)
             response = HttpResponse(
@@ -127,7 +128,6 @@ class FactureViewSet(viewsets.ModelViewSet):
                 f"PDF view requested for facture {facture.facture_number}")
 
             if not hasattr(facture, 'pdf_url') or not facture.pdf_url:
-                # Generate PDF if it doesn't exist
                 logger.info("PDF doesn't exist, generating new one")
                 pdf_url = generate_and_upload_facture_pdf(facture)
                 if not pdf_url:
@@ -147,7 +147,6 @@ class FactureViewSet(viewsets.ModelViewSet):
     def debug_facture(self, request):
         """Debug endpoint to test PDF generation"""
         try:
-            # Get a sample facture or create a test one
             facture = Facture.objects.first()
             if not facture:
                 return Response({'error': 'No factures found'}, status=status.HTTP_404_NOT_FOUND)
@@ -155,7 +154,6 @@ class FactureViewSet(viewsets.ModelViewSet):
             logger.info(
                 f"Debug: Testing PDF generation for facture {facture.facture_number}")
 
-            # Check facture data
             debug_info = {
                 'facture_id': facture.id,
                 'facture_number': facture.facture_number,
@@ -168,7 +166,6 @@ class FactureViewSet(viewsets.ModelViewSet):
                 'existing_pdf_url': getattr(facture, 'pdf_url', 'None'),
             }
 
-            # Test PDF generation
             logger.info("Debug: Attempting PDF generation...")
             pdf_url = generate_and_upload_facture_pdf(
                 facture, force_regenerate=True)
@@ -190,10 +187,9 @@ class FactureViewSet(viewsets.ModelViewSet):
             logger.info(
                 f"Payment intent requested for facture {facture.facture_number}")
 
-            # Create payment intent
             intent = stripe.PaymentIntent.create(
-                amount=int(facture.final_total * 100),  # Convert to cents
-                currency='usd',  # Change to your currency
+                amount=int(facture.final_total * 100),
+                currency='usd',
                 metadata={
                     'facture_id': facture.id,
                     'facture_number': facture.facture_number,
@@ -201,7 +197,6 @@ class FactureViewSet(viewsets.ModelViewSet):
                 }
             )
 
-            # Save payment intent ID
             facture.stripe_payment_intent = intent.id
             facture.save()
 
@@ -223,15 +218,12 @@ class FactureViewSet(viewsets.ModelViewSet):
             logger.info(
                 f"Payment confirmation for facture {facture.facture_number}, intent: {payment_intent_id}")
 
-            # Verify payment with Stripe
             intent = stripe.PaymentIntent.retrieve(payment_intent_id)
 
             if intent.status == 'succeeded':
-                # Update facture status
                 facture.payment_status = 'paid'
                 facture.save()
 
-                # Update all products in this facture to paid
                 if hasattr(facture, 'products'):
                     updated_count = facture.products.filter(
                         payement='unpaid').update(payement='paid')

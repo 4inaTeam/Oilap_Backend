@@ -22,15 +22,11 @@ from datetime import timedelta
 
 load_dotenv()
 
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 cred = credentials.Certificate(os.getenv('FIREBASE_CREDENTIALS_PATH'))
 firebase_admin.initialize_app(cred)
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
@@ -62,16 +58,12 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
-# SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv('SECRET_KEY')
 
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
 
-
-# Application definition
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -89,6 +81,7 @@ INSTALLED_APPS = [
     'factures',
     'payments',
     'webhooks',
+    'invoices',
     'firebase_service',
     'corsheaders',
 ]
@@ -125,7 +118,6 @@ ROOT_URLCONF = 'backend.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        # Correctly points to the templates directory
         'DIRS': [os.path.join(BASE_DIR, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
@@ -146,9 +138,6 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 WSGI_APPLICATION = 'backend.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -160,9 +149,6 @@ DATABASES = {
     }
 }
 
-
-# Password validation
-# https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -180,9 +166,6 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
-# Internationalization
-# https://docs.djangoproject.com/en/5.1/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
 
 TIME_ZONE = 'UTC'
@@ -192,13 +175,13 @@ USE_I18N = True
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
-
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),
+]
+
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -238,6 +221,14 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 
 ML_MODEL_DIR = os.path.join(BASE_DIR, 'ml_model')
 ML_MODEL_PATH = os.path.join(BASE_DIR, 'ml_model', 'invoice_classifier.h5')
+
+# tell pytesseract where tesseract.exe lives
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+# tell programs where to find the tessdata dir
+os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
+
+
 CONFIDENCE_THRESHOLD = 0.7
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = ('png', 'jpg', 'jpeg')
@@ -277,10 +268,8 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# Poppler path for pdf2image
-# Windows example: POPPLER_PATH = r"C:\Program Files\poppler-23.11.0\Library\bin"
-# Linux/Mac: Leave as None since poppler-utils is typically in PATH
-POPPLER_PATH = None  # Change this based on your OS and poppler installation
+
+POPPLER_PATH = None
 
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME'),
@@ -289,3 +278,5 @@ CLOUDINARY_STORAGE = {
 }
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+CLASSES = {'electricity': 0, 'water': 1, 'purchase': 2}

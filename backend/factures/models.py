@@ -33,7 +33,7 @@ class Facture(models.Model):
     total_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=0)
     tva_rate = models.DecimalField(
-        max_digits=5, decimal_places=2, default=20)  # Default 20%
+        max_digits=5, decimal_places=2, default=20)
     tva_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=0)
     credit_card_fee = models.DecimalField(
@@ -55,17 +55,30 @@ class Facture(models.Model):
             if not self.facture_number:
                 self.facture_number = self.generate_facture_number()
 
-            # Calculate totals BEFORE saving
-            self.calculate_totals()
+            # For new instances, set initial totals
+            if is_new:
+                self.total_amount = Decimal('0.00')
+                self.tva_amount = Decimal('0.00')
+                self.final_total = self.credit_card_fee
 
+            # First save to get the primary key
             super().save(*args, **kwargs)
 
-            # Generate PDF after saving (so we have an ID)
+            # Calculate totals AFTER saving if it's not a new instance
+            if not is_new:
+                self.calculate_totals()
+                # Update without triggering save again
+                Facture.objects.filter(pk=self.pk).update(
+                    total_amount=self.total_amount,
+                    tva_amount=self.tva_amount,
+                    final_total=self.final_total
+                )
+
+            # Generate PDF after saving
             if is_new or not self.pdf_url:
                 from .utils import generate_and_upload_facture_pdf
                 pdf_url = generate_and_upload_facture_pdf(self)
                 if pdf_url and not self.pdf_url:
-                    # Update without triggering save again
                     Facture.objects.filter(pk=self.pk).update(
                         pdf_url=pdf_url,
                         pdf_public_id=self.pdf_public_id
@@ -100,17 +113,19 @@ class Facture(models.Model):
         try:
             # Get all products for this facture that are done and unpaid
             products_total = Decimal('0.00')
-            
+
             # Check if we have products relation
             if hasattr(self, 'products'):
                 products_total = sum(
-                    Decimal(str(product.price)) * Decimal(str(product.quantity))
+                    Decimal(str(product.price)) *
+                    Decimal(str(product.quantity))
                     for product in self.products.all()
                     if product.status == 'done'
                 )
-            
+
             self.total_amount = products_total
-            self.tva_amount = self.total_amount * (self.tva_rate / Decimal('100'))
+            self.tva_amount = self.total_amount * \
+                (self.tva_rate / Decimal('100'))
             self.final_total = self.total_amount + self.tva_amount + self.credit_card_fee
 
             logger.info(f"Calculated totals for facture {self.facture_number if self.facture_number else 'new'}: "
