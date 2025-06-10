@@ -7,23 +7,19 @@ import pytesseract
 from PIL import Image
 from django.conf import settings
 
-# Load and map the ML model
 MODEL_PATH = settings.ML_MODEL_PATH
 model = tf.keras.models.load_model(MODEL_PATH)
 CLASS_INDICES = {v: k for k, v in settings.CLASSES.items()}
 
-# Regex patterns for OCR keywords
 KEYWORD_PATTERNS = {
     'water': re.compile(r'\b(eau|water)\b', re.IGNORECASE),
     'electricity': re.compile(r'\b(électricité|electricity|edf)\b', re.IGNORECASE),
     'purchase': re.compile(r'\b(achat|purchase|facture)\b', re.IGNORECASE)
 }
 
-# Regex patterns for date and amount
 DATE_PATTERN = r"(\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b|\b\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}\b)"
 AMOUNT_PATTERN = r"(\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s?(?:€|EUR|\$)?\b)"
 
-# Ensure Tesseract paths
 os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -33,7 +29,6 @@ def classify_image(img: Image.Image):
     Classify PIL image into a category with confidence score.
     If certain keywords appear via OCR, override the model prediction.
     """
-    # 1) Model-based prediction
     x = img.resize((224, 224))
     x = np.array(x) / 255.0
     x = np.expand_dims(x, axis=0)
@@ -42,7 +37,6 @@ def classify_image(img: Image.Image):
     category = CLASS_INDICES[idx]
     confidence = float(preds[idx])
 
-    # 2) Quick OCR for keyword override
     try:
         text = pytesseract.image_to_string(img, lang='fra')
         for cat, pattern in KEYWORD_PATTERNS.items():

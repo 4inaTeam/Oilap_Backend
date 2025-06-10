@@ -121,9 +121,15 @@ class FactureViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def view_pdf(self, request, pk=None):
-        """Get PDF URL for viewing in browser"""
+        """Get PDF URL for viewing in browser with access control"""
         try:
             facture = self.get_object()
+            user = request.user
+
+            if user.role not in ['ADMIN', 'ACCOUNTANT']:
+                if not facture.client or facture.client != user:
+                    return Response({'error': 'You do not have permission to view this facture.'}, status=status.HTTP_403_FORBIDDEN)
+
             logger.info(
                 f"PDF view requested for facture {facture.facture_number}")
 

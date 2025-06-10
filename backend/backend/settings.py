@@ -222,10 +222,8 @@ pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tessera
 ML_MODEL_DIR = os.path.join(BASE_DIR, 'ml_model')
 ML_MODEL_PATH = os.path.join(BASE_DIR, 'ml_model', 'invoice_classifier.h5')
 
-# tell pytesseract where tesseract.exe lives
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# tell programs where to find the tessdata dir
 os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
 
 
