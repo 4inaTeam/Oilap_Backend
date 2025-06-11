@@ -36,16 +36,13 @@ class FactureViewSet(viewsets.ModelViewSet):
                 facture_id = response.data.get('id')
                 if facture_id:
                     facture = Facture.objects.get(id=facture_id)
-                    # Force immediate PDF generation
                     logger.info(
                         f"Starting PDF generation for facture {facture.facture_number}")
 
-                    # Generate PDF synchronously
                     pdf_buffer = generate_facture_pdf(facture)
                     if not pdf_buffer:
                         raise Exception("PDF buffer is empty")
 
-                    # Upload to Cloudinary
                     pdf_url = generate_and_upload_facture_pdf(facture)
                     if pdf_url:
                         facture.pdf_url = pdf_url
@@ -59,7 +56,6 @@ class FactureViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 logger.error(
                     f"PDF Generation Error for facture {facture_id}: {str(e)}")
-                # Don't fail the whole request if PDF generation fails
                 response.data['pdf_generation_error'] = str(e)
 
         return response

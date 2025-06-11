@@ -1,4 +1,5 @@
 from decimal import Decimal
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -10,7 +11,7 @@ from factures.models import Facture
 from .serializers import PaymentSerializer
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
-
+logger = logging.getLogger(__name__)
 
 class PaymentViewSet(viewsets.ModelViewSet):
     serializer_class = PaymentSerializer
@@ -30,22 +31,18 @@ class PaymentViewSet(viewsets.ModelViewSet):
             facture_id = request.data.get('facture_id')
             facture = Facture.objects.get(id=facture_id)
 
-            # Check if user has permission
             if request.user.role not in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT'] and facture.client != request.user:
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
-            # Add minimum amount validation
-            min_amount = Decimal('0.50')  # $0.50 minimum for USD
+            min_amount = Decimal('0.50')  
             if facture.final_total < min_amount:
                 return Response({
                     'error': f'Amount must be at least ${min_amount}. Current amount: ${facture.final_total}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Create payment intent with restricted payment methods to avoid redirects
             intent = stripe.PaymentIntent.create(
-                amount=int(facture.final_total * 100),  # Convert to cents
+                amount=int(facture.final_total * 100), 
                 currency='usd',
-                # Method 1: Use automatic payment methods but disable redirects
                 automatic_payment_methods={
                     'enabled': True,
                     'allow_redirects': 'never'
@@ -57,7 +54,6 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 }
             )
 
-            # Create payment record
             payment = Payment.objects.create(
                 facture=facture,
                 amount=facture.final_total,
@@ -85,22 +81,19 @@ class PaymentViewSet(viewsets.ModelViewSet):
             facture_id = request.data.get('facture_id')
             facture = Facture.objects.get(id=facture_id)
 
-            # Check if user has permission
             if request.user.role not in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT'] and facture.client != request.user:
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
-            # Add minimum amount validation
-            min_amount = Decimal('0.50')  # $0.50 minimum for USD
+            min_amount = Decimal('0.50')  
             if facture.final_total < min_amount:
                 return Response({
                     'error': f'Amount must be at least ${min_amount}. Current amount: ${facture.final_total}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Method 2: Use only card payment methods (no redirects possible)
             intent = stripe.PaymentIntent.create(
-                amount=int(facture.final_total * 100),  # Convert to cents
+                amount=int(facture.final_total * 100), 
                 currency='usd',
-                payment_method_types=['card'],  # Only allow card payments
+                payment_method_types=['card'],  
                 metadata={
                     'facture_id': facture.id,
                     'facture_number': facture.facture_number,
@@ -108,7 +101,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 }
             )
 
-            # Create payment record
+
             payment = Payment.objects.create(
                 facture=facture,
                 amount=facture.final_total,
@@ -136,34 +129,58 @@ class PaymentViewSet(viewsets.ModelViewSet):
             payment_intent_id = request.data.get('payment_intent_id')
             payment_method_id = request.data.get('payment_method_id')
 
-            # Confirm the payment intent
             intent = stripe.PaymentIntent.confirm(
                 payment_intent_id,
                 payment_method=payment_method_id
             )
 
-            # Update payment record
+            # find the local Payment record
             try:
-                payment = Payment.objects.get(stripe_payment_intent_id=payment_intent_id)
-                if intent.status == 'succeeded':
-                    payment.status = 'completed'
-                    # Update facture status to paid
-                    payment.facture.payment_status = 'PAID'
-                    payment.facture.save()
-                elif intent.status == 'requires_action':
-                    payment.status = 'requires_action'
-                else:
-                    payment.status = 'failed'
-                payment.save()
+                payment = Payment.objects.get(
+                    stripe_payment_intent_id=payment_intent_id
+                )
             except Payment.DoesNotExist:
-                pass
+                return Response(
+                    {'error': 'Payment record not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            if intent.status == 'succeeded':
+                payment.status = 'completed'
+                # mark the facture paid
+                facture = payment.facture
+                facture.payment_status = 'paid'
+                facture.save()
+
+                # mark each product on that facture paid
+                # (this will trigger your pre_save signal)
+                paid_count = facture.products.filter(
+                    payement='unpaid'
+                ).update(payement='paid')
+
+                logger.info(
+                    f"Marked {paid_count} products as paid on facture {facture.id}"
+                )
+
+            elif intent.status == 'requires_action':
+                payment.status = 'requires_action'
+            else:
+                payment.status = 'failed'
+
+            payment.save()
 
             return Response({
                 'status': intent.status,
-                'client_secret': intent.client_secret if intent.status == 'requires_action' else None
+                'client_secret': (
+                    intent.client_secret
+                    if intent.status == 'requires_action'
+                    else None
+                )
             })
 
         except stripe.error.StripeError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': str(e)},
+                            status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': str(e)},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)

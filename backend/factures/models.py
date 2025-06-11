@@ -111,26 +111,22 @@ class Facture(models.Model):
     def calculate_totals(self):
         """Calculate all totals for the facture"""
         try:
-            # Get all products for this facture that are done and unpaid
             products_total = Decimal('0.00')
-
-            # Check if we have products relation
+        
             if hasattr(self, 'products'):
                 products_total = sum(
-                    Decimal(str(product.price)) *
-                    Decimal(str(product.quantity))
+                    Decimal(str(product.price))
                     for product in self.products.all()
                     if product.status == 'done'
-                )
-
+            )
+        
             self.total_amount = products_total
-            self.tva_amount = self.total_amount * \
-                (self.tva_rate / Decimal('100'))
+            self.tva_amount = self.total_amount * (self.tva_rate / Decimal('100'))
             self.final_total = self.total_amount + self.tva_amount + self.credit_card_fee
-
+        
             logger.info(f"Calculated totals for facture {self.facture_number if self.facture_number else 'new'}: "
                         f"Products Total={self.total_amount}, TVA={self.tva_amount}, Final={self.final_total}")
-
+        
         except Exception as e:
             logger.error(f"Error calculating totals: {str(e)}")
             # Set safe defaults
@@ -138,8 +134,8 @@ class Facture(models.Model):
             self.tva_amount = Decimal('0.00')
             self.final_total = self.credit_card_fee
 
-    def __str__(self):
-        return f"Facture {self.facture_number} - {self.client.username}"
+        def __str__(self):
+            return f"Facture {self.facture_number} - {self.client.username}"
 
-    class Meta:
-        ordering = ['-created_at']
+        class Meta:
+            ordering = ['-created_at']
