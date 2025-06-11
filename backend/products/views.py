@@ -102,10 +102,14 @@ class CancelProductView(generics.UpdateAPIView):
 
 class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated, IsEmployee | IsAdmin]
+    permission_classes = [permissions.IsAuthenticated,
+                          IsEmployee | IsAdmin | IsClient]
 
     def get_queryset(self):
-        return Product.objects.all()
+        user = self.request.user
+        if hasattr(user, 'role') and user.role in ['ADMIN', 'EMPLOYEE']:
+            return Product.objects.all()
+        return Product.objects.filter(client=user)
 
 
 class ClientProductListView(generics.ListAPIView):

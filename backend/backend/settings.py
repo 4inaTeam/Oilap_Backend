@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     'payments',
     'webhooks',
     'invoices',
+    'tickets',
     'firebase_service',
     'corsheaders',
 ]

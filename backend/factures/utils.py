@@ -359,5 +359,4 @@ def add_product_and_update_facture_pdf(facture, product):
     Helper to add a product to a facture and regenerate/upload the PDF.
     Call this after saving the product to the facture.
     """
-    # Make sure the product is saved and linked to the facture before calling this
     generate_and_upload_facture_pdf(facture, force_regenerate=True)
