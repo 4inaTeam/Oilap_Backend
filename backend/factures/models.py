@@ -52,37 +52,23 @@ class Facture(models.Model):
     def save(self, *args, **kwargs):
         try:
             is_new = not self.pk
+            
+            # Generate facture number if new
             if not self.facture_number:
                 self.facture_number = self.generate_facture_number()
-
-            # For new instances, set initial totals
-            if is_new:
-                self.total_amount = Decimal('0.00')
-                self.tva_amount = Decimal('0.00')
-                self.final_total = self.credit_card_fee
 
             # First save to get the primary key
             super().save(*args, **kwargs)
 
-            # Calculate totals AFTER saving if it's not a new instance
-            if not is_new:
-                self.calculate_totals()
-                # Update without triggering save again
-                Facture.objects.filter(pk=self.pk).update(
-                    total_amount=self.total_amount,
-                    tva_amount=self.tva_amount,
-                    final_total=self.final_total
-                )
-
-            # Generate PDF after saving
-            if is_new or not self.pdf_url:
-                from .utils import generate_and_upload_facture_pdf
-                pdf_url = generate_and_upload_facture_pdf(self)
-                if pdf_url and not self.pdf_url:
-                    Facture.objects.filter(pk=self.pk).update(
-                        pdf_url=pdf_url,
-                        pdf_public_id=self.pdf_public_id
-                    )
+            # Calculate totals after saving (so we have access to related products)
+            self.calculate_totals()
+            
+            # Update the calculated fields without triggering save again
+            Facture.objects.filter(pk=self.pk).update(
+                total_amount=self.total_amount,
+                tva_amount=self.tva_amount,
+                final_total=self.final_total
+            )
 
             if is_new:
                 logger.info(
@@ -118,11 +104,12 @@ class Facture(models.Model):
                     Decimal(str(product.price))
                     for product in self.products.all()
                     if product.status == 'done'
-            )
+                )
         
             self.total_amount = products_total
             self.tva_amount = self.total_amount * (self.tva_rate / Decimal('100'))
-            self.final_total = self.total_amount + self.tva_amount + self.credit_card_fee
+            # Remove credit card fee from final total calculation
+            self.final_total = self.total_amount + self.tva_amount
         
             logger.info(f"Calculated totals for facture {self.facture_number if self.facture_number else 'new'}: "
                         f"Products Total={self.total_amount}, TVA={self.tva_amount}, Final={self.final_total}")
@@ -132,10 +119,38 @@ class Facture(models.Model):
             # Set safe defaults
             self.total_amount = Decimal('0.00')
             self.tva_amount = Decimal('0.00')
-            self.final_total = self.credit_card_fee
+            self.final_total = Decimal('0.00')
 
-        def __str__(self):
-            return f"Facture {self.facture_number} - {self.client.username}"
+    def refresh_pdf(self):
+        """Method to refresh PDF when products are updated"""
+        try:
+            from .utils import generate_and_upload_facture_pdf
+            
+            # Recalculate totals first
+            self.calculate_totals()
+            
+            # Update the database with new totals
+            Facture.objects.filter(pk=self.pk).update(
+                total_amount=self.total_amount,
+                tva_amount=self.tva_amount,
+                final_total=self.final_total
+            )
+            
+            # Regenerate PDF
+            pdf_url = generate_and_upload_facture_pdf(self, force_regenerate=True)
+            if pdf_url:
+                logger.info(f"PDF refreshed for facture {self.facture_number}")
+                return pdf_url
+            else:
+                logger.error(f"Failed to refresh PDF for facture {self.facture_number}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error refreshing PDF: {str(e)}")
+            return None
 
-        class Meta:
-            ordering = ['-created_at']
+    def __str__(self):
+        return f"Facture {self.facture_number} - {self.client.username}"
+
+    class Meta:
+        ordering = ['-created_at']

@@ -76,15 +76,48 @@ class CustomUser(AbstractUser):
         null=True
     )
     isActive = models.BooleanField(default=True)
+
+    # FCM Token pour les notifications push
     fcm_token = models.CharField(
         max_length=255,
         blank=True,
         null=True,
-        verbose_name="FCM Device Token"
+        verbose_name=_("FCM Device Token"),
+        help_text=_("Firebase Cloud Messaging token for push notifications")
+    )
+
+    # Optionnel : pour gérer plusieurs appareils
+    notifications_enabled = models.BooleanField(
+        default=True,
+        verbose_name=_("Notifications enabled"),
+        help_text=_("Whether the user wants to receive push notifications")
+    )
+
+    # Timestamp de la dernière mise à jour du token FCM
+    fcm_token_updated_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        verbose_name=_("FCM Token updated at")
     )
 
     def __str__(self):
         return self.username
+
+    def update_fcm_token(self, token):
+        """Méthode pour mettre à jour le token FCM"""
+        from django.utils import timezone
+
+        self.fcm_token = token
+        self.fcm_token_updated_at = timezone.now()
+        self.save(update_fields=['fcm_token', 'fcm_token_updated_at'])
+
+    def can_receive_notifications(self):
+        """Vérifie si l'utilisateur peut recevoir des notifications"""
+        return (
+            self.notifications_enabled and
+            self.fcm_token and
+            self.isActive
+        )
 
 
 class Client(models.Model):
@@ -102,3 +135,44 @@ class Client(models.Model):
 
     def __str__(self):
         return self.custom_user.email
+
+
+# Modèle optionnel pour gérer plusieurs appareils par utilisateur
+class UserDevice(models.Model):
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='devices'
+    )
+    fcm_token = models.CharField(
+        max_length=255,
+        unique=True,
+        verbose_name=_("FCM Device Token")
+    )
+    device_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name=_("Device Name")
+    )
+    platform = models.CharField(
+        max_length=20,
+        choices=[
+            ('android', 'Android'),
+            ('ios', 'iOS'),
+            ('web', 'Web'),
+            ('windows', 'Windows')
+        ],
+        default='android'
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['user', 'fcm_token']
+        verbose_name = _("User Device")
+        verbose_name_plural = _("User Devices")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.device_name or self.platform}"

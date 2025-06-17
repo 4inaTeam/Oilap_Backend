@@ -55,6 +55,12 @@ def generate_facture_pdf(facture):
         logger.info(
             f"Generating PDF for facture ID: {facture.id}, Number: {getattr(facture, 'facture_number', 'N/A')}")
 
+        # FORCE recalculate totals before PDF generation to ensure fresh data
+        facture.calculate_totals()
+        
+        # Refresh facture from database to get latest calculated values
+        facture.refresh_from_db()
+
         # Get client information safely
         client_name = "N/A"
         client_email = "N/A"
@@ -103,11 +109,8 @@ def generate_facture_pdf(facture):
             ['Produit', 'Quantité', 'Production', 'Prix Unitaire', 'Total']
         ]
 
-        # FORCE facture to recalculate totals before PDF generation
-        facture.calculate_totals()
-
         logger.info(
-            f"Facture totals after recalculation - Total: {facture.total_amount}, TVA: {facture.tva_amount}, Final: {facture.final_total}")
+            f"Facture totals before PDF generation - Total: {facture.total_amount}, TVA: {facture.tva_amount}, Final: {facture.final_total}")
 
         # Access products correctly
         if hasattr(facture, 'products'):
@@ -183,15 +186,15 @@ def generate_facture_pdf(facture):
         story.append(product_table)
         story.append(Spacer(1, 40))
 
-        # Use the facture's calculated totals directly
+        # Use the facture's calculated totals directly (NO CREDIT CARD FEE)
         total_amount = facture.total_amount
         tva_amount = facture.tva_amount
-        final_total = facture.final_total
+        final_total = facture.final_total  # This now excludes credit card fee
 
         logger.info(
-            f"Using facture totals - Base: {total_amount}, TVA: {tva_amount}, Final: {final_total}")
+            f"Using facture totals for PDF - Base: {total_amount}, TVA: {tva_amount}, Final: {final_total}")
 
-        # Signature and totals section with REAL data
+        # Signature and totals section with REAL data (NO CREDIT CARD FEE SHOWN)
         signature_totals_data = [
             ['Signature', '', 'Total', f'{total_amount:.2f} DT'],
             ['', '', 'TVA', f'{tva_amount:.2f} DT'],
@@ -359,4 +362,4 @@ def add_product_and_update_facture_pdf(facture, product):
     Helper to add a product to a facture and regenerate/upload the PDF.
     Call this after saving the product to the facture.
     """
-    generate_and_upload_facture_pdf(facture, force_regenerate=True)
+    return facture.refresh_pdf()
