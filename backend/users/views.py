@@ -62,7 +62,7 @@ class ClientCreateView(generics.CreateAPIView):
 
 
 class UserListView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def get(self, request):
         users = CustomUser.objects.all()

@@ -22,6 +22,9 @@ urlpatterns = [
         path('login/', EmailCINAuthView.as_view(), name='token_obtain_pair'),
         path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     ])),
+
+    path('api/tickets/', include('tickets.urls')),
+
     path('api/users/', include('users.urls')),
     path('api/products/', include('products.urls')),
     path('api/auth/password/reset/', include('django_rest_passwordreset.urls')),
@@ -29,6 +32,8 @@ urlpatterns = [
     path('api/', include('payments.urls')),
     path('api/', include('webhooks.urls')),
     path('api/invoices/', include('invoices.urls')),
+
+    # API Documentation
     path('swagger/', schema_view.with_ui('swagger',
          cache_timeout=0), name='schema-swagger-ui'),
 ]

@@ -1,15 +1,14 @@
-# tickets/apps.py
 from django.apps import AppConfig
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 class TicketsConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'tickets'
 
     def ready(self):
-        # Initialize Firebase
         from django.conf import settings
         if not hasattr(settings, 'FIREBASE_APP'):
             try:
@@ -17,8 +16,11 @@ class TicketsConfig(AppConfig):
                 settings.FIREBASE_APP = initialize_firebase()
             except ImportError as e:
                 logger.error(f"Error importing firebase_service: {str(e)}")
-        
-        # Import signals
+
+        from firebase_admin import firestore
+        db = firestore.client()
+        db.collection('test_ping').document('ping').set({'pong': True})
+
         try:
             import tickets.signals
         except ImportError as e:
