@@ -19,13 +19,10 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# ===================== Firebase Configuration =====================
-# Firebase settings
 FIREBASE_CREDENTIAL_PATH = os.path.join(BASE_DIR, 'firebase', 'serviceAccountKey.json')
 os.makedirs(os.path.dirname(FIREBASE_CREDENTIAL_PATH), exist_ok=True)
 FIREBASE_SERVER_KEY = os.getenv('FIREBASE_SERVER_KEY', "AIzaSyAVoWXdutFTZhfITp5xSDUhR6wMvkw7IHc")
 
-# ===================== Core Django Settings =====================
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
@@ -46,8 +43,8 @@ INSTALLED_APPS = [
     'factures',
     'payments',
     'webhooks',
-    'invoices',
     'tickets', 
+    'bills',
     'corsheaders',
 ]
 
@@ -131,9 +128,9 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 # ===================== Media & Static Files =====================
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-STATIC_URL = 'static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+STATIC_URL = 'templates/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'templatefiles')
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'templates')]
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ===================== Internationalization =====================
