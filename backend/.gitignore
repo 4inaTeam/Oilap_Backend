@@ -1,5 +1,30 @@
+# Environment variables
 .env
+
+# Logs
 webhooks.log
+
+# Firebase credentials
 oilap-8a178-firebase-adminsdk-fbsvc-0b05532864.json
-/ml_model
-/firebase
+
+
+# Specific large file you tried to push
+backend/ml_model/invoice_classifier.h5
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Jupyter Notebook checkpoints (if you use Jupyter)
+.ipynb_checkpoints/
+
+# VS Code settings (optional)
+.vscode/
+
+# Virtual environments (optional)
+venv/
+.env/
+
+/firebase/

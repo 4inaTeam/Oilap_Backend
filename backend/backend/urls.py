@@ -31,9 +31,8 @@ urlpatterns = [
     path('api/', include('factures.urls')),
     path('api/', include('payments.urls')),
     path('api/', include('webhooks.urls')),
-    path('api/invoices/', include('invoices.urls')),
+    path('api/', include('bills.urls')),
 
-    # API Documentation
     path('swagger/', schema_view.with_ui('swagger',
          cache_timeout=0), name='schema-swagger-ui'),
 ]

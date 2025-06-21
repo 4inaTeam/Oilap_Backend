@@ -86,7 +86,8 @@ class Product(models.Model):
         # Calculate end_time if not set
         if not self.end_time:
             start_time = self.created_at if self.created_at else timezone.now()
-            self.end_time = start_time + timedelta(minutes=self.estimation_time)
+            self.end_time = start_time + \
+                timedelta(minutes=self.estimation_time)
             logger.info(f"Calculated end_time for product: {self.end_time}")
 
         logger.info(
@@ -108,9 +109,10 @@ class Product(models.Model):
 
 @receiver(post_save, sender=Product)
 def handle_product_status_change(sender, instance, created, **kwargs):
-    """Handle facture creation when product status changes to 'done'"""
+    """Handle facture creation and notifications when product status changes to 'done'"""
     if created:
-        logger.info(f"New product created: {instance.id}, skipping facture logic")
+        logger.info(
+            f"New product created: {instance.id}, skipping facture logic")
         return
 
     try:
@@ -127,7 +129,8 @@ def handle_product_status_change(sender, instance, created, **kwargs):
 
                 if existing_facture:
                     facture = existing_facture
-                    logger.info(f"Using existing facture: {facture.facture_number}")
+                    logger.info(
+                        f"Using existing facture: {facture.facture_number}")
                 else:
                     facture = Facture.objects.create(
                         client=instance.client,
@@ -135,10 +138,12 @@ def handle_product_status_change(sender, instance, created, **kwargs):
                         tva_rate=20,
                         credit_card_fee=12
                     )
-                    logger.info(f"Created new facture: {facture.facture_number}")
+                    logger.info(
+                        f"Created new facture: {facture.facture_number}")
 
                 if instance.facture != facture:
-                    Product.objects.filter(pk=instance.pk).update(facture=facture)
+                    Product.objects.filter(
+                        pk=instance.pk).update(facture=facture)
                     logger.info(
                         f"Linked product {instance.pk} to facture {facture.facture_number}"
                     )
@@ -149,8 +154,140 @@ def handle_product_status_change(sender, instance, created, **kwargs):
                     f"Updated facture totals - Total: {facture.total_amount}, "
                     f"TVA: {facture.tva_amount}, Final: {facture.final_total}"
                 )
+
+                # Enhanced notification sending with better debugging
+                logger.info(
+                    f"Starting notification process for product {instance.id}")
+
+                # Debug user notification settings
+                user_debug_info = instance.client.get_notification_debug_info()
+                logger.info(
+                    f"User {instance.client.id} notification debug: {user_debug_info}")
+
+                # Import notification functions
+                from tickets.utils import (
+                    send_push_notification_for_product,
+                    send_email_notification_for_product,
+                    send_sms_notification_for_product
+                )
+
+                # Try to import and create notification record
+                try:
+                    from tickets.models import Notification
+                    notification = Notification.create_product_ready_notification(
+                        user=instance.client,
+                        product=instance,
+                        facture=facture
+                    )
+                    logger.info(
+                        f"Created notification record: {notification.id}")
+                except ImportError:
+                    logger.warning(
+                        "Notification model not available, skipping database record")
+                except Exception as e:
+                    logger.error(
+                        f"Error creating notification record: {str(e)}")
+
+                # Initialize notification results
+                notification_results = {
+                    'push': False,
+                    'email': False,
+                    'sms': False
+                }
+
+                # Send push notification with enhanced error handling
+                try:
+                    if instance.client.can_receive_push_notifications():
+                        logger.info(
+                            f"User {instance.client.id} can receive push notifications, sending...")
+                        push_success = send_push_notification_for_product(
+                            user=instance.client,
+                            product=instance,
+                            facture=facture
+                        )
+                        notification_results['push'] = push_success
+                        if push_success:
+                            logger.info(
+                                f"Push notification sent successfully for product {instance.id}")
+                        else:
+                            logger.warning(
+                                f"Push notification failed for product {instance.id}")
+                    else:
+                        logger.info(
+                            f"User {instance.client.id} cannot receive push notifications, skipping...")
+                except Exception as e:
+                    logger.error(
+                        f"Error sending push notification for product {instance.id}: {str(e)}")
+
+                # Send email notification
+                try:
+                    if instance.client.can_receive_email_notifications():
+                        logger.info(
+                            f"User {instance.client.id} can receive email notifications, sending...")
+                        email_success = send_email_notification_for_product(
+                            user=instance.client,
+                            product=instance,
+                            facture=facture
+                        )
+                        notification_results['email'] = email_success
+                        if email_success:
+                            logger.info(
+                                f"Email notification sent successfully for product {instance.id}")
+                        else:
+                            logger.warning(
+                                f"Email notification failed for product {instance.id}")
+                    else:
+                        logger.info(
+                            f"User {instance.client.id} cannot receive email notifications, skipping...")
+                except Exception as e:
+                    logger.error(
+                        f"Error sending email notification for product {instance.id}: {str(e)}")
+
+                # Send SMS notification
+                try:
+                    if instance.client.can_receive_sms_notifications():
+                        logger.info(
+                            f"User {instance.client.id} can receive SMS notifications, sending...")
+                        sms_success = send_sms_notification_for_product(
+                            user=instance.client,
+                            product=instance,
+                            facture=facture
+                        )
+                        notification_results['sms'] = sms_success
+                        if sms_success:
+                            logger.info(
+                                f"SMS notification sent successfully for product {instance.id}")
+                        else:
+                            logger.warning(
+                                f"SMS notification failed for product {instance.id}")
+                    else:
+                        logger.info(
+                            f"User {instance.client.id} cannot receive SMS notifications, skipping...")
+                except Exception as e:
+                    logger.error(
+                        f"Error sending SMS notification for product {instance.id}: {str(e)}")
+
+                # Log final results
+                successful_notifications = [
+                    k for k, v in notification_results.items() if v]
+                failed_notifications = [
+                    k for k, v in notification_results.items() if not v]
+
+                logger.info(
+                    f"Notification process completed for product {instance.id}. "
+                    f"Successful: {successful_notifications}, Failed: {failed_notifications}"
+                )
+
+                # If no notifications were sent, this might indicate a problem
+                if not any(notification_results.values()):
+                    logger.warning(
+                        f"No notifications were sent for product {instance.id}. "
+                        f"User {instance.client.id} notification settings: {user_debug_info}"
+                    )
+
     except Exception as e:
-        logger.error(f"Error in product status change handler: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error in product status change handler: {str(e)}", exc_info=True)
         raise
 
 
@@ -165,7 +302,8 @@ def handle_product_payment_status(sender, instance, **kwargs):
 
         # Only proceed if payement is changing unpaid -> paid
         if old_instance.payement == 'unpaid' and instance.payement == 'paid':
-            logger.info(f"Product {instance.pk} payment status changing from unpaid to paid")
+            logger.info(
+                f"Product {instance.pk} payment status changing from unpaid to paid")
 
             with transaction.atomic():
                 facture = old_instance.facture
@@ -180,7 +318,8 @@ def handle_product_payment_status(sender, instance, **kwargs):
                 if not facture.products.filter(payement='unpaid').exists():
                     facture.payment_status = 'paid'
                     facture.save()
-                    logger.info(f"Facture {facture.facture_number} marked as paid")
+                    logger.info(
+                        f"Facture {facture.facture_number} marked as paid")
 
                 logger.info(
                     f"Removed product {instance.pk} from facture {facture.facture_number}"
@@ -188,5 +327,6 @@ def handle_product_payment_status(sender, instance, **kwargs):
     except Product.DoesNotExist:
         logger.warning(f"Product {instance.pk} not found in pre_save signal")
     except Exception as e:
-        logger.error(f"Error in product payment status handler: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error in product payment status handler: {str(e)}", exc_info=True)
         raise
