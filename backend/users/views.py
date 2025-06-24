@@ -142,7 +142,7 @@ class SearchUserByCIN(APIView):
 
 
 class GetUserById(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def get(self, request, user_id):
         try:
