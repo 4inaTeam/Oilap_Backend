@@ -74,7 +74,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'cin': {'required': False},
         }
 
-
 class AdminUserCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
