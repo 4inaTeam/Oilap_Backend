@@ -2,9 +2,63 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.core.validators import RegexValidator
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ValidationError
+import re
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def validate_international_phone(value):
+    """
+    Validates phone number in international format (+countrycode + number) 
+    or legacy 8-digit format for backward compatibility.
+    """
+    if not value:
+        return
+
+    cleaned_value = re.sub(r'[^\d+]', '', value)
+
+    if cleaned_value.startswith('+'):
+        if len(cleaned_value) < 10 or len(cleaned_value) > 20:
+            raise ValidationError(
+                _('International phone number must be between 10-20 digits including country code.')
+            )
+
+        if not re.match(r'^\+\d{1,4}\d{6,15}$', cleaned_value):
+            raise ValidationError(
+                _('Invalid international phone format. Use +countrycode followed by phone number.')
+            )
+
+        country_validations = {
+            '+216': (12, 12),
+            '+33': (13, 13),
+            '+1': (12, 12),
+            '+44': (13, 13),
+            '+39': (13, 13),
+            '+34': (12, 12),
+            '+212': (13, 13),
+            '+213': (13, 13),
+            '+20': (13, 13),
+        }
+
+        for country_code, (min_len, max_len) in country_validations.items():
+            if cleaned_value.startswith(country_code):
+                if len(cleaned_value) < min_len or len(cleaned_value) > max_len:
+                    phone_digits = len(cleaned_value) - len(country_code)
+                    expected_digits = min_len - len(country_code)
+                    raise ValidationError(
+                        _(f'Phone number for {country_code} must have exactly {expected_digits} digits after country code.')
+                    )
+                break
+
+    elif re.match(r'^\d{8}$', cleaned_value):
+        return
+
+    else:
+        raise ValidationError(
+            _('Phone number must be either 8 digits (legacy format) or international format (+countrycode + number).')
+        )
 
 
 class CustomUserManager(BaseUserManager):
@@ -47,11 +101,6 @@ class CustomUser(AbstractUser):
 
     objects = CustomUserManager()
 
-    tel_validator = RegexValidator(
-        regex=r'^\d{8}$',
-        message="Telephone must be exactly 8 numeric digits."
-    )
-
     ROLE_CHOICES = [
         ('ADMIN', 'Admin'),
         ('EMPLOYEE', 'Employee'),
@@ -72,12 +121,17 @@ class CustomUser(AbstractUser):
         validators=[RegexValidator(
             r'^\d{8}$', "CIN must be exactly 8 numeric digits.")],
     )
+
+    # Updated tel field to support international phone numbers
     tel = models.CharField(
-        max_length=8,
-        validators=[tel_validator],
+        max_length=20,  # Increased from 8 to support international format
+        validators=[validate_international_phone],
         blank=True,
-        null=True
+        null=True,
+        help_text=_(
+            "Phone number in international format (+countrycode + number) or 8 digits for legacy format")
     )
+
     isActive = models.BooleanField(default=True)
 
     # Enhanced FCM token field
@@ -121,6 +175,62 @@ class CustomUser(AbstractUser):
 
     def __str__(self):
         return self.username
+
+    def clean(self):
+        """Additional model-level validation"""
+        super().clean()
+
+        # Clean phone number by removing spaces and formatting
+        if self.tel:
+            self.tel = re.sub(r'[^\d+]', '', self.tel)
+
+    def get_formatted_phone(self):
+        """
+        Returns a nicely formatted phone number for display
+        """
+        if not self.tel:
+            return ""
+
+        # If it's an international number
+        if self.tel.startswith('+'):
+            # You can add more sophisticated formatting here
+            return self.tel
+
+        # If it's a legacy 8-digit number, format as Tunisian
+        elif len(self.tel) == 8 and self.tel.isdigit():
+            # Format as XX XXX XXX for readability
+            return f"{self.tel[:2]} {self.tel[2:5]} {self.tel[5:]}"
+
+        return self.tel
+
+    def get_country_code(self):
+        """
+        Extract country code from phone number
+        """
+        if not self.tel or not self.tel.startswith('+'):
+            return '+216'  # Default to Tunisia for legacy numbers
+
+        # Extract country code (everything before the main number)
+        for code in ['+216', '+33', '+49', '+1', '+44', '+39', '+34', '+212', '+213', '+20']:
+            if self.tel.startswith(code):
+                return code
+
+        # If no known country code found, extract first 1-4 digits after +
+        match = re.match(r'^(\+\d{1,4})', self.tel)
+        return match.group(1) if match else '+216'
+
+    def get_phone_without_country_code(self):
+        """
+        Get phone number without country code
+        """
+        if not self.tel:
+            return ""
+
+        if self.tel.startswith('+'):
+            country_code = self.get_country_code()
+            return self.tel[len(country_code):]
+
+        return self.tel
 
     def update_fcm_token(self, token):
         """Update FCM token for the user"""
@@ -238,6 +348,9 @@ class CustomUser(AbstractUser):
             'username': self.username,
             'email': self.email,
             'tel': self.tel,
+            'formatted_phone': self.get_formatted_phone(),
+            'country_code': self.get_country_code(),
+            'phone_without_country': self.get_phone_without_country_code(),
             'isActive': self.isActive,
             'notifications_enabled': self.notifications_enabled,
             'push_notifications_enabled': self.push_notifications_enabled,
