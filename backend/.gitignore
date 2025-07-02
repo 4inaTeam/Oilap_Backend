@@ -1,5 +1,3 @@
-# Environment variables
-.env
 
 # Logs
 webhooks.log
@@ -25,6 +23,6 @@ __pycache__/
 
 # Virtual environments (optional)
 venv/
-.env/
+
 
 /firebase/
