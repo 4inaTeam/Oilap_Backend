@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.http import HttpResponse, HttpResponseRedirect
+from django.contrib.auth import get_user_model
 from .models import Facture
 from .serializers import FactureSerializer
 from .utils import generate_facture_pdf, generate_and_upload_facture_pdf
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+User = get_user_model()
+
 
 class FactureViewSet(viewsets.ModelViewSet):
     serializer_class = FactureSerializer
@@ -22,9 +25,24 @@ class FactureViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+    
         if user.role in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
-            return Facture.objects.all()
+            queryset = Facture.objects.all()
+            
+            # Allow filtering by client_id via query parameter
+            client_id = self.request.query_params.get('client_id', None)
+            if client_id:
+                try:
+                    # Validate that the client exists and is actually a client
+                    client = User.objects.get(id=client_id, role='CLIENT')
+                    queryset = queryset.filter(client=client)
+                except User.DoesNotExist:
+                    # Return empty queryset if client doesn't exist or isn't a client
+                    queryset = Facture.objects.none()
+            
+            return queryset
         else:
+            # Regular clients can only see their own factures
             return Facture.objects.filter(client=user)
 
     def create(self, request, *args, **kwargs):

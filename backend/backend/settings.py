@@ -19,9 +19,11 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-FIREBASE_CREDENTIAL_PATH = os.path.join(BASE_DIR, 'firebase', 'serviceAccountKey.json')
+FIREBASE_CREDENTIAL_PATH = os.path.join(
+    BASE_DIR, 'firebase', 'serviceAccountKey.json')
 os.makedirs(os.path.dirname(FIREBASE_CREDENTIAL_PATH), exist_ok=True)
-FIREBASE_SERVER_KEY = os.getenv('FIREBASE_SERVER_KEY', "AIzaSyAVoWXdutFTZhfITp5xSDUhR6wMvkw7IHc")
+FIREBASE_SERVER_KEY = os.getenv(
+    'FIREBASE_SERVER_KEY', "AIzaSyAVoWXdutFTZhfITp5xSDUhR6wMvkw7IHc")
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
@@ -43,7 +45,7 @@ INSTALLED_APPS = [
     'factures',
     'payments',
     'webhooks',
-    'tickets', 
+    'tickets',
     'bills',
     'corsheaders',
 ]
@@ -79,7 +81,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'backend.wsgi.application'
 
-# ===================== Database Configuration =====================
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -91,7 +92,6 @@ DATABASES = {
     }
 }
 
-# ===================== Authentication & JWT =====================
 AUTH_USER_MODEL = 'users.CustomUser'
 
 SIMPLE_JWT = {
@@ -117,7 +117,6 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-# ===================== Email Configuration =====================
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
@@ -125,7 +124,6 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 
-# ===================== Media & Static Files =====================
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 STATIC_URL = 'templates/'
@@ -133,42 +131,35 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'templatefiles')
 STATICFILES_DIRS = [os.path.join(BASE_DIR, 'templates')]
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# ===================== Internationalization =====================
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# ===================== Payment Gateways =====================
 STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY')
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
 
-# ===================== SMS Configuration =====================
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
 TWILIO_ENABLED = os.getenv('TWILIO_ENABLED', 'False') == 'True'
 
-# ===================== OCR Configuration =====================
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
 CONFIDENCE_THRESHOLD = 0.7
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = ('png', 'jpg', 'jpeg')
 
-# ===================== ML Model Configuration =====================
 ML_MODEL_DIR = os.path.join(BASE_DIR, 'ml_model')
 ML_MODEL_PATH = os.path.join(BASE_DIR, 'ml_model', 'invoice_classifier.h5')
 CLASSES = {'electricity': 0, 'water': 1, 'purchase': 2}
 
-# ===================== Password Reset =====================
 REST_PASSWORDRESET = {
     'TOKEN_EXPIRY_TIME_HOURS': 0,
     'TOKEN_EXPIRY_TIME_MINUTES': 15,
 }
 
-# ===================== CORS Configuration =====================
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
@@ -197,7 +188,6 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# ===================== Cloudinary Configuration =====================
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME'),
     'API_KEY': os.getenv('CLOUDINARY_API_KEY'),
@@ -206,7 +196,6 @@ CLOUDINARY_STORAGE = {
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
-# ===================== Logging Configuration =====================
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -235,6 +224,6 @@ LOGGING = {
     },
 }
 
-# ===================== Additional Settings =====================
 POPPLER_PATH = None
 ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.31.146']
