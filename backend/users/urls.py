@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    TotalClientsView,
     UserCreateView,
     ClientCreateView,
     UserListView,
@@ -32,4 +33,6 @@ urlpatterns = [
     path('deactivate/<int:user_id>/',
          UserDeactivateView.as_view(), name='user-deactivate'),
     path('get/<int:user_id>/', GetUserById.as_view(), name='get-user-by-id'),
+
+    path('total-clients/', TotalClientsView.as_view(), name='total-clients'),
 ]

@@ -35,12 +35,30 @@ class Product(models.Model):
         'mauvaise': 8,
     }
 
+    OLIVE_OIL_YIELD_MAP = {
+        'excellente': 0.20,
+        'bonne': 0.18,
+        'moyenne': 0.17,
+        'mauvaise': 0.15,
+    }
+
     quality = models.CharField(
         max_length=10, choices=QUALITY_CHOICES, default='moyenne'
     )
     origine = models.TextField(blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True)
-    quantity = models.PositiveIntegerField(default=1)
+    quantity = models.PositiveIntegerField(
+        default=1, help_text="Quantity in kg")
+
+    # New field to store calculated olive oil volume
+    olive_oil_volume = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Calculated olive oil volume in liters"
+    )
+
     payement = models.CharField(
         max_length=10, choices=PAYEMENT_CHOICES, default='unpaid'
     )
@@ -73,8 +91,18 @@ class Product(models.Model):
         related_name='products'
     )
 
+    def calculate_olive_oil_volume(self):
+        """Calculate the expected olive oil volume based on olive quality and quantity"""
+        yield_per_kg = self.OLIVE_OIL_YIELD_MAP.get(self.quality, 0.17)
+        return self.quantity * yield_per_kg
+
+    def get_oil_efficiency_percentage(self):
+        """Get the oil extraction efficiency as a percentage"""
+        yield_per_kg = self.OLIVE_OIL_YIELD_MAP.get(self.quality, 0.17)
+        return yield_per_kg * 100
+
     def save(self, *args, **kwargs):
-        """Calculate price based on quality and end_time"""
+        """Calculate price, olive oil volume, and end_time"""
         logger.info(
             f"Saving product {self.id if self.id else 'new'} - Status: {self.status}, Quality: {self.quality}"
         )
@@ -82,6 +110,9 @@ class Product(models.Model):
         # Calculate price based on quality
         base_price = self.QUALITY_PRICE_MAP.get(self.quality, 10)
         self.price = base_price * self.quantity
+
+        # Calculate olive oil volume
+        self.olive_oil_volume = self.calculate_olive_oil_volume()
 
         # Calculate end_time if not set
         if not self.end_time:
@@ -91,7 +122,8 @@ class Product(models.Model):
             logger.info(f"Calculated end_time for product: {self.end_time}")
 
         logger.info(
-            f"Product save - Quality: {self.quality}, Price: {self.price}, Quantity: {self.quantity}"
+            f"Product save - Quality: {self.quality}, Price: {self.price}, "
+            f"Quantity: {self.quantity}kg, Olive Oil Volume: {self.olive_oil_volume}L"
         )
 
         super().save(*args, **kwargs)
@@ -101,7 +133,7 @@ class Product(models.Model):
         )
 
     def __str__(self):
-        return f"Product {self.id} - {self.get_status_display()}"
+        return f"Product {self.id} - {self.get_status_display()} ({self.quantity}kg → {self.olive_oil_volume}L)"
 
     class Meta:
         ordering = ['end_time']
@@ -112,12 +144,15 @@ def handle_product_status_change(sender, instance, created, **kwargs):
     """Handle facture creation and notifications when product status changes to 'done'"""
     if created:
         logger.info(
-            f"New product created: {instance.id}, skipping facture logic")
+            f"New product created: {instance.id} - {instance.quantity}kg olives "
+            f"({instance.quality}) → {instance.olive_oil_volume}L oil, skipping facture logic"
+        )
         return
 
     try:
         logger.info(
-            f"Product status change handler - ID: {instance.pk}, Status: {instance.status}, Payment: {instance.payement}"
+            f"Product status change handler - ID: {instance.pk}, Status: {instance.status}, "
+            f"Payment: {instance.payement}, Oil Volume: {instance.olive_oil_volume}L"
         )
 
         if instance.status == 'done' and instance.payement == 'unpaid':
@@ -155,9 +190,11 @@ def handle_product_status_change(sender, instance, created, **kwargs):
                     f"TVA: {facture.tva_amount}, Final: {facture.final_total}"
                 )
 
-                # Enhanced notification sending with better debugging
+                # Enhanced notification sending with oil volume info
                 logger.info(
-                    f"Starting notification process for product {instance.id}")
+                    f"Starting notification process for product {instance.id} "
+                    f"({instance.quantity}kg → {instance.olive_oil_volume}L oil)"
+                )
 
                 # Debug user notification settings
                 user_debug_info = instance.client.get_notification_debug_info()
@@ -303,7 +340,9 @@ def handle_product_payment_status(sender, instance, **kwargs):
         # Only proceed if payement is changing unpaid -> paid
         if old_instance.payement == 'unpaid' and instance.payement == 'paid':
             logger.info(
-                f"Product {instance.pk} payment status changing from unpaid to paid")
+                f"Product {instance.pk} payment status changing from unpaid to paid "
+                f"({instance.quantity}kg → {instance.olive_oil_volume}L oil)"
+            )
 
             with transaction.atomic():
                 facture = old_instance.facture

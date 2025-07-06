@@ -209,3 +209,11 @@ class EmployeeAccountantUpdateView(generics.UpdateAPIView):
             raise ValidationError(
                 "Can only update Employee or Accountant users")
         return obj
+
+
+class TotalClientsView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def get(self, request):
+        total_clients = CustomUser.objects.filter(role='CLIENT').count()
+        return Response({"total_clients": total_clients})
