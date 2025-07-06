@@ -1,4 +1,3 @@
-# Updated views.py to handle form field items data
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -7,7 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.http import HttpResponse, Http404
 from django.contrib.auth import get_user_model
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, Sum
 from .models import Bill
 from .serializers import BillSerializer, BillUpdateSerializer
 from users.permissions import IsAdminOrAccountant
@@ -17,10 +16,175 @@ from io import BytesIO
 from django.core.files.uploadedfile import InMemoryUploadedFile
 import json
 import os
+from factures.models import Facture
 
 User = get_user_model()
 
-# Updated BillCreateView with proper file handling
+
+class BillStatisticsView(APIView):
+    permission_classes = [IsAuthenticated | IsAdminOrAccountant]
+
+    def get_accessible_bills(self, user):
+        if hasattr(user, 'role'):
+            user_role = user.role.lower()
+
+            if user_role in ['admin', 'accountant']:
+                enterprise_users = User.objects.filter(
+                    role__iregex=r'^(admin|accountant)$'
+                )
+                enterprise_bills = Bill.objects.filter(
+                    user__in=enterprise_users)
+                return enterprise_bills
+
+        user_bills = Bill.objects.filter(user=user)
+        return user_bills
+
+    def get_accessible_factures(self, user):
+        """
+        Get factures that the user can access based on their role:
+        - Regular users: only their own factures
+        - Accountants: all factures (shared within enterprise)
+        - Admins: all factures (shared within enterprise)
+        """
+        if hasattr(user, 'role'):
+            user_role = user.role.lower()
+
+            if user_role in ['admin', 'accountant']:
+                # Admin and accountant can see all factures
+                return Facture.objects.all()
+
+        # For regular users, return factures they are clients of
+        user_factures = Facture.objects.filter(client=user)
+        return user_factures
+
+    def get(self, request):
+        """
+        Get separated statistics for expenses and revenue:
+        - Total expenses: bills only (water + electricity + purchase)
+        - Total revenue: client factures only
+        - Percentage breakdown by category (expenses calculated independently from revenue)
+        """
+        bills = self.get_accessible_bills(request.user)
+        factures = self.get_accessible_factures(request.user)
+
+        # Debug logging
+        print(
+            f"User: {request.user.username}, Role: {getattr(request.user, 'role', 'No role')}")
+        print(f"Bills count: {bills.count()}")
+        print(f"Factures count: {factures.count()}")
+
+        # Calculate totals separately
+        bills_total = bills.aggregate(total=Sum('amount'))[
+            'total'] or 0  # EXPENSES
+        factures_total = factures.aggregate(total=Sum('final_total'))[
+            'total'] or 0  # REVENUE
+
+        # Calculate statistics by category for expenses (bills only)
+        expense_category_stats = {}
+
+        # Process bill categories - percentages based on bills total only
+        for category_code, category_name in Bill.CATEGORY_CHOICES:
+            category_bills = bills.filter(category=category_code)
+            category_sum = category_bills.aggregate(
+                total=Sum('amount'))['total'] or 0
+            category_count = category_bills.count()
+
+            # Calculate percentage based on bills total only (expenses)
+            percentage = (category_sum / bills_total *
+                          100) if bills_total > 0 else 0
+
+            expense_category_stats[category_code] = {
+                'name': category_name,
+                'total_amount': float(category_sum),
+                'count': category_count,
+                'percentage': round(percentage, 2),
+                'type': 'expense'
+            }
+
+        # Add client factures as separate revenue category
+        revenue_category_stats = {
+            'client': {
+                'name': 'Client Factures',
+                'total_amount': float(factures_total),
+                'count': factures.count(),
+                'percentage': 100.0 if factures_total > 0 else 0.0,  # 100% of revenue
+                'type': 'revenue'
+            }
+        }
+
+        # Combine all categories for the response
+        all_category_stats = {
+            **expense_category_stats, **revenue_category_stats}
+
+        # Group utilities for summary
+        utilities_total = (
+            expense_category_stats['water']['total_amount'] +
+            expense_category_stats['electricity']['total_amount']
+        )
+        utilities_count = (
+            expense_category_stats['water']['count'] +
+            expense_category_stats['electricity']['count']
+        )
+        utilities_percentage = (
+            expense_category_stats['water']['percentage'] +
+            expense_category_stats['electricity']['percentage']
+        )
+
+        # Calculate net profit/loss
+        net_result = factures_total - bills_total
+        net_result_type = "profit" if net_result >= 0 else "loss"
+
+        response_data = {
+            'total_expenses': float(bills_total),      # Bills only
+            'total_revenue': float(factures_total),    # Factures only
+            'net_result': float(net_result),           # Revenue - Expenses
+            'net_result_type': net_result_type,        # "profit" or "loss"
+            'total_bills_count': bills.count(),
+            'total_factures_count': factures.count(),
+            'total_items_count': bills.count() + factures.count(),
+            'breakdown_by_type': {
+                'expenses': {
+                    'total': float(bills_total),
+                    'count': bills.count(),
+                    'categories': ['water', 'electricity', 'purchase'],
+                    'description': 'Operating expenses from bills'
+                },
+                'revenue': {
+                    'total': float(factures_total),
+                    'count': factures.count(),
+                    'categories': ['client'],
+                    'description': 'Income from client factures'
+                }
+            },
+            'category_breakdown': all_category_stats,
+            'expense_summary': {
+                'utilities': {
+                    'name': 'Utilities (Water & Electricity)',
+                    'total_amount': utilities_total,
+                    'count': utilities_count,
+                    'percentage': round(utilities_percentage, 2),
+                    'type': 'expense'
+                },
+                'purchases': {
+                    'name': 'Purchases',
+                    'total_amount': expense_category_stats['purchase']['total_amount'],
+                    'count': expense_category_stats['purchase']['count'],
+                    'percentage': expense_category_stats['purchase']['percentage'],
+                    'type': 'expense'
+                }
+            },
+            'revenue_summary': {
+                'client_factures': {
+                    'name': 'Client Factures',
+                    'total_amount': revenue_category_stats['client']['total_amount'],
+                    'count': revenue_category_stats['client']['count'],
+                    'percentage': 100.0,
+                    'type': 'revenue'
+                }
+            }
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class BillCreateView(APIView):
@@ -210,9 +374,8 @@ class BillCreateView(APIView):
         print("Serializer errors:", serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 # Keep the rest of the views unchanged
-
-
 class BillListView(APIView):
     permission_classes = [IsAuthenticated | IsAdminOrAccountant]
 

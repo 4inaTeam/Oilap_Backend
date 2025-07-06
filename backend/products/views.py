@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from django.http import HttpResponse
 from django.utils import timezone
 from django.db.models import Q
+from django.conf import settings
 import csv
 import io
 from reportlab.pdfgen import canvas
@@ -13,12 +14,15 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import inch
+
 from .models import Product
 from .serializers import ProductSerializer
 from users.permissions import IsEmployee, IsAdmin, IsClient
 from users.models import CustomUser
 from rest_framework.exceptions import ValidationError
 from rest_framework.exceptions import NotFound
+from django.db.models import Sum, Count, Q
+from django.db.models.functions import Coalesce
 
 logger = logging.getLogger(__name__)
 
@@ -683,3 +687,177 @@ class ProductStatsView(APIView):
         except Exception as e:
             logger.error(f"Error getting product stats: {str(e)}")
             return Response({'error': 'Failed to get statistics'}, status=500)
+
+
+class TotalQuantityView(APIView):
+    """
+    Get total quantity of olives and sum of oil produced
+    """
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def get(self, request):
+        try:
+            # First, let's check if there are any products
+            total_products = Product.objects.count()
+            logger.info(f"Total products count: {total_products}")
+
+            if total_products == 0:
+                return Response({
+                    'total_quantity': 0,
+                    'total_oil_volume': 0,
+                    'overall_yield_percentage': 0,
+                    'message': 'No products found'
+                }, status=status.HTTP_200_OK)
+
+            # Calculate total quantity of olives across all products
+            total_quantity_result = Product.objects.aggregate(
+                total=Sum('quantity')
+            )
+            total_quantity = total_quantity_result['total'] or 0
+            logger.info(f"Total quantity: {total_quantity}")
+
+            # Calculate total oil volume - handle cases where olive_oil_volume might be null
+            total_oil_result = Product.objects.exclude(
+                olive_oil_volume__isnull=True
+            ).aggregate(
+                total=Sum('olive_oil_volume')
+            )
+            total_oil_volume = total_oil_result['total'] or 0
+            logger.info(f"Total oil volume: {total_oil_volume}")
+
+            # If we have null olive_oil_volume values, calculate them manually
+            products_without_oil_volume = Product.objects.filter(
+                olive_oil_volume__isnull=True
+            )
+
+            manual_oil_calculation = 0
+            for product in products_without_oil_volume:
+                yield_rate = Product.OLIVE_OIL_YIELD_MAP.get(
+                    product.quality, 0.17)
+                manual_oil_calculation += product.quantity * yield_rate
+
+            total_oil_volume += manual_oil_calculation
+            logger.info(
+                f"Total oil volume after manual calculation: {total_oil_volume}")
+
+            # Calculate overall average yield
+            overall_yield_percentage = 0
+            if total_quantity > 0:
+                overall_yield_percentage = (
+                    float(total_oil_volume) / float(total_quantity)) * 100
+
+            # Get basic breakdown by status
+            quantity_by_status = {}
+            for status_choice in Product.STATUS_CHOICES:
+                status_key = status_choice[0]
+                status_products = Product.objects.filter(status=status_key)
+
+                status_quantity = status_products.aggregate(
+                    total=Sum('quantity')
+                )['total'] or 0
+
+                status_oil = status_products.exclude(
+                    olive_oil_volume__isnull=True
+                ).aggregate(
+                    total=Sum('olive_oil_volume')
+                )['total'] or 0
+
+                # Add manual calculation for products without oil volume
+                for product in status_products.filter(olive_oil_volume__isnull=True):
+                    yield_rate = Product.OLIVE_OIL_YIELD_MAP.get(
+                        product.quality, 0.17)
+                    status_oil += product.quantity * yield_rate
+
+                quantity_by_status[status_key] = {
+                    'total_quantity': float(status_quantity),
+                    'total_oil': float(status_oil)
+                }
+
+            return Response({
+                'total_quantity': float(total_quantity),
+                'total_oil_volume': float(total_oil_volume),
+                'overall_yield_percentage': round(overall_yield_percentage, 2),
+                'quantity_by_status': quantity_by_status,
+                'total_products': total_products
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(
+                f"Error getting total quantity and oil volume: {str(e)}")
+            logger.error(f"Full traceback: {error_details}")
+
+            return Response({
+                'error': 'Failed to get total quantity and oil volume',
+                'details': str(e) if settings.DEBUG else 'Internal server error'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class OriginPercentageView(APIView):
+    """
+    Get percentage distribution of products by origin
+    """
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def get(self, request):
+        try:
+            # Get total count of products (excluding those without origin)
+            total_products = Product.objects.exclude(
+                Q(origine__isnull=True) | Q(origine__exact='')
+            ).count()
+
+            if total_products == 0:
+                return Response({
+                    'message': 'No products with origins found',
+                    'total_products': 0,
+                    'origin_percentages': []
+                }, status=status.HTTP_200_OK)
+
+            # Get count by origin
+            origin_counts = Product.objects.exclude(
+                Q(origine__isnull=True) | Q(origine__exact='')
+            ).values('origine').annotate(
+                count=Count('id'),
+                total_quantity=Coalesce(Sum('quantity'), 0)
+            ).order_by('-count')
+
+            # Calculate percentages
+            origin_percentages = []
+            for origin_data in origin_counts:
+                percentage = (origin_data['count'] / total_products) * 100
+                quantity_percentage = 0
+
+                # Calculate quantity percentage if we have total quantity
+                total_quantity = Product.objects.exclude(
+                    Q(origine__isnull=True) | Q(origine__exact='')
+                ).aggregate(total=Coalesce(Sum('quantity'), 0))['total']
+
+                if total_quantity > 0:
+                    quantity_percentage = (
+                        origin_data['total_quantity'] / total_quantity) * 100
+
+                origin_percentages.append({
+                    'origin': origin_data['origine'],
+                    'count': origin_data['count'],
+                    'percentage': round(percentage, 2),
+                    'total_quantity': origin_data['total_quantity'],
+                    'quantity_percentage': round(quantity_percentage, 2)
+                })
+
+            return Response({
+                'total_products_with_origin': total_products,
+                'origin_percentages': origin_percentages,
+                'summary': {
+                    'total_origins': len(origin_percentages),
+                    'most_common_origin': origin_percentages[0]['origin'] if origin_percentages else None,
+                    'most_common_origin_percentage': origin_percentages[0]['percentage'] if origin_percentages else 0
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error getting origin percentages: {str(e)}")
+            return Response(
+                {'error': 'Failed to get origin percentages'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

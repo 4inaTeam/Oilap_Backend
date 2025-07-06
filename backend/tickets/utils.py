@@ -1,7 +1,6 @@
 import requests
 from django.conf import settings
 from django.core.mail import send_mail
-# ✅ Use Django's timezone, not datetime.timezone
 from django.utils import timezone
 from twilio.rest import Client
 from firebase_admin import messaging

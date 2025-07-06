@@ -4,6 +4,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.http import HttpResponse, HttpResponseRedirect
 from django.contrib.auth import get_user_model
+from django.db.models import Sum, Q, Count
+from decimal import Decimal
 from .models import Facture
 from .serializers import FactureSerializer
 from .utils import generate_facture_pdf, generate_and_upload_facture_pdf
@@ -25,10 +27,10 @@ class FactureViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-    
+
         if user.role in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
             queryset = Facture.objects.all()
-            
+
             # Allow filtering by client_id via query parameter
             client_id = self.request.query_params.get('client_id', None)
             if client_id:
@@ -39,7 +41,7 @@ class FactureViewSet(viewsets.ModelViewSet):
                 except User.DoesNotExist:
                     # Return empty queryset if client doesn't exist or isn't a client
                     queryset = Facture.objects.none()
-            
+
             return queryset
         else:
             # Regular clients can only see their own factures
@@ -77,6 +79,97 @@ class FactureViewSet(viewsets.ModelViewSet):
                 response.data['pdf_generation_error'] = str(e)
 
         return response
+
+    @action(detail=False, methods=['get'])
+    def total_revenue(self, request):
+        """Calculate total revenue from paid factures"""
+        try:
+            user = request.user
+
+            # Check permissions - only ADMIN, EMPLOYEE, and ACCOUNTANT can view total revenue
+            if user.role not in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
+                return Response(
+                    {'error': 'You do not have permission to view total revenue.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Get query parameters for filtering
+            client_id = request.query_params.get('client_id', None)
+            date_from = request.query_params.get('date_from', None)
+            date_to = request.query_params.get('date_to', None)
+
+            # Base queryset - only paid factures
+            queryset = Facture.objects.filter(payment_status='paid')
+
+            # Apply client filter if provided
+            if client_id:
+                try:
+                    client = User.objects.get(id=client_id, role='CLIENT')
+                    queryset = queryset.filter(client=client)
+                except User.DoesNotExist:
+                    return Response(
+                        {'error': 'Client not found or invalid client ID.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            # Apply date filters if provided
+            if date_from:
+                queryset = queryset.filter(created_at__date__gte=date_from)
+            if date_to:
+                queryset = queryset.filter(created_at__date__lte=date_to)
+
+            # Calculate totals
+            revenue_data = queryset.aggregate(
+                total_revenue=Sum('final_total'),
+                total_amount_before_tax=Sum('total_amount'),
+                total_tva=Sum('tva_amount'),
+                facture_count=Count('id')
+            )
+
+            # Handle case where no paid factures exist
+            total_revenue = revenue_data['total_revenue'] or Decimal('0.00')
+            total_amount_before_tax = revenue_data['total_amount_before_tax'] or Decimal(
+                '0.00')
+            total_tva = revenue_data['total_tva'] or Decimal('0.00')
+            facture_count = revenue_data['facture_count'] or 0
+
+            # Prepare response data
+            response_data = {
+                'total_revenue': float(total_revenue),
+                'total_amount_before_tax': float(total_amount_before_tax),
+                'total_tva': float(total_tva),
+                'paid_factures_count': facture_count,
+                'filters_applied': {
+                    'client_id': client_id,
+                    'date_from': date_from,
+                    'date_to': date_to
+                }
+            }
+
+            # Add client info if filtered by client
+            if client_id:
+                try:
+                    client = User.objects.get(id=client_id, role='CLIENT')
+                    response_data['client_info'] = {
+                        'id': client.id,
+                        'username': client.username,
+                        'email': getattr(client, 'email', ''),
+                        'first_name': getattr(client, 'first_name', ''),
+                        'last_name': getattr(client, 'last_name', '')
+                    }
+                except User.DoesNotExist:
+                    pass
+
+            logger.info(
+                f"Total revenue calculated: {total_revenue} from {facture_count} paid factures")
+            return Response(response_data)
+
+        except Exception as e:
+            logger.error(f"Error calculating total revenue: {str(e)}")
+            return Response(
+                {'error': 'An error occurred while calculating total revenue.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['get'])
     def download_pdf(self, request, pk=None):
