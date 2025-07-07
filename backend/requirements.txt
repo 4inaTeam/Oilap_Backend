@@ -134,7 +134,6 @@ sympy==1.14.0
 tb-nightly==2.19.0a20250218
 tensorboard-data-server==0.7.2
 termcolor==3.0.1
-tf_nightly==2.20.0.dev20250606
 tokenizers==0.21.1
 torch==2.7.0
 torchvision==0.22.0
