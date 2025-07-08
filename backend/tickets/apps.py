@@ -25,7 +25,6 @@ class TicketsConfig(AppConfig):
             try:
                 from .firebase_service import initialize_firebase
                 settings.FIREBASE_APP = initialize_firebase()
-                logger.info("Firebase initialized successfully")
             except ImportError as e:
                 logger.error(f"Error importing firebase_service: {str(e)}")
             except Exception as e:
@@ -35,7 +34,6 @@ class TicketsConfig(AppConfig):
         """Safely import signals"""
         try:
             import tickets.signals
-            logger.info("Tickets signals imported successfully")
         except ImportError as e:
             logger.error(f"Error importing tickets signals: {str(e)}")
 
@@ -51,7 +49,6 @@ class TicketsConfig(AppConfig):
                     db = firestore.client()
                     db.collection('test_ping').document(
                         'ping').set({'pong': True})
-                    logger.info("Firebase connection test successful")
                     return
                 except Exception as e:
                     logger.warning(
