@@ -716,39 +716,47 @@ class TotalQuantityView(APIView):
             total_quantity = total_quantity_result['total'] or 0
             logger.info(f"Total quantity: {total_quantity}")
 
-            # Calculate total oil volume - handle cases where olive_oil_volume might be null
-            total_oil_result = Product.objects.exclude(
-                olive_oil_volume__isnull=True
+            # Calculate total oil volume - separate queries to avoid type mixing
+            # First get products with non-null olive_oil_volume
+            total_oil_from_db = Product.objects.filter(
+                olive_oil_volume__isnull=False
             ).aggregate(
                 total=Sum('olive_oil_volume')
-            )
-            total_oil_volume = total_oil_result['total'] or 0
-            logger.info(f"Total oil volume: {total_oil_volume}")
+            )['total'] or 0
 
-            # If we have null olive_oil_volume values, calculate them manually
+            # Then calculate for products with null olive_oil_volume
             products_without_oil_volume = Product.objects.filter(
                 olive_oil_volume__isnull=True
             )
 
             manual_oil_calculation = 0
             for product in products_without_oil_volume:
-                yield_rate = Product.OLIVE_OIL_YIELD_MAP.get(
-                    product.quality, 0.17)
+                yield_rate = getattr(Product, 'OLIVE_OIL_YIELD_MAP', {}).get(
+                    product.quality, 0.17
+                )
                 manual_oil_calculation += product.quantity * yield_rate
 
-            total_oil_volume += manual_oil_calculation
-            logger.info(
-                f"Total oil volume after manual calculation: {total_oil_volume}")
+            total_oil_volume = float(total_oil_from_db) + \
+                manual_oil_calculation
+            logger.info(f"Total oil volume: {total_oil_volume}")
 
             # Calculate overall average yield
             overall_yield_percentage = 0
             if total_quantity > 0:
                 overall_yield_percentage = (
-                    float(total_oil_volume) / float(total_quantity)) * 100
+                    total_oil_volume / float(total_quantity)) * 100
 
             # Get basic breakdown by status
             quantity_by_status = {}
-            for status_choice in Product.STATUS_CHOICES:
+
+            status_choices = getattr(Product, 'STATUS_CHOICES', [
+                ('pending', 'Pending'),
+                ('doing', 'Doing'),
+                ('done', 'Done'),
+                ('canceled', 'Canceled')
+            ])
+
+            for status_choice in status_choices:
                 status_key = status_choice[0]
                 status_products = Product.objects.filter(status=status_key)
 
@@ -756,17 +764,25 @@ class TotalQuantityView(APIView):
                     total=Sum('quantity')
                 )['total'] or 0
 
-                status_oil = status_products.exclude(
-                    olive_oil_volume__isnull=True
+                # Calculate oil volume for this status - separate queries
+                status_oil_from_db = status_products.filter(
+                    olive_oil_volume__isnull=False
                 ).aggregate(
                     total=Sum('olive_oil_volume')
                 )['total'] or 0
 
-                # Add manual calculation for products without oil volume
-                for product in status_products.filter(olive_oil_volume__isnull=True):
-                    yield_rate = Product.OLIVE_OIL_YIELD_MAP.get(
-                        product.quality, 0.17)
-                    status_oil += product.quantity * yield_rate
+                status_manual_oil = 0
+                status_products_without_oil = status_products.filter(
+                    olive_oil_volume__isnull=True
+                )
+
+                for product in status_products_without_oil:
+                    yield_rate = getattr(Product, 'OLIVE_OIL_YIELD_MAP', {}).get(
+                        product.quality, 0.17
+                    )
+                    status_manual_oil += product.quantity * yield_rate
+
+                status_oil = float(status_oil_from_db) + status_manual_oil
 
                 quantity_by_status[status_key] = {
                     'total_quantity': float(status_quantity),
@@ -788,10 +804,19 @@ class TotalQuantityView(APIView):
                 f"Error getting total quantity and oil volume: {str(e)}")
             logger.error(f"Full traceback: {error_details}")
 
-            return Response({
+            error_response = {
                 'error': 'Failed to get total quantity and oil volume',
-                'details': str(e) if settings.DEBUG else 'Internal server error'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error_type': type(e).__name__,
+                'details': str(e)
+            }
+
+            if getattr(settings, 'DEBUG', False):
+                error_response['traceback'] = error_details
+
+            return Response(
+                error_response,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class OriginPercentageView(APIView):
