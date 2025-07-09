@@ -1,3 +1,4 @@
+from django.db.models import Q, Sum, Count, Case, When, DecimalField
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -17,6 +18,8 @@ from django.core.files.uploadedfile import InMemoryUploadedFile
 import json
 import os
 from factures.models import Facture
+
+User = get_user_model()
 
 User = get_user_model()
 
@@ -57,12 +60,66 @@ class BillStatisticsView(APIView):
         user_factures = Facture.objects.filter(client=user)
         return user_factures
 
+    def calculate_payment_status_stats(self, factures):
+        """
+        Calculate payment status statistics for factures
+        """
+        total_factures = factures.count()
+
+        if total_factures == 0:
+            return {
+                'paid': {'count': 0, 'percentage': 0.0, 'total_amount': 0.0},
+                'unpaid': {'count': 0, 'percentage': 0.0, 'total_amount': 0.0},
+                'partial': {'count': 0, 'percentage': 0.0, 'total_amount': 0.0}
+            }
+
+        # Count factures by payment status
+        payment_stats = factures.aggregate(
+            paid_count=Count(Case(When(payment_status='paid', then=1))),
+            unpaid_count=Count(Case(When(payment_status='unpaid', then=1))),
+            partial_count=Count(Case(When(payment_status='partial', then=1))),
+
+            paid_amount=Sum(Case(When(payment_status='paid', then='final_total'),
+                                 default=0, output_field=DecimalField())),
+            unpaid_amount=Sum(Case(When(payment_status='unpaid', then='final_total'),
+                                   default=0, output_field=DecimalField())),
+            partial_amount=Sum(Case(When(payment_status='partial', then='final_total'),
+                                    default=0, output_field=DecimalField()))
+        )
+
+        # Calculate percentages
+        paid_percentage = (
+            payment_stats['paid_count'] / total_factures * 100) if total_factures > 0 else 0
+        unpaid_percentage = (
+            payment_stats['unpaid_count'] / total_factures * 100) if total_factures > 0 else 0
+        partial_percentage = (
+            payment_stats['partial_count'] / total_factures * 100) if total_factures > 0 else 0
+
+        return {
+            'paid': {
+                'count': payment_stats['paid_count'],
+                'percentage': round(paid_percentage, 2),
+                'total_amount': float(payment_stats['paid_amount'] or 0)
+            },
+            'unpaid': {
+                'count': payment_stats['unpaid_count'],
+                'percentage': round(unpaid_percentage, 2),
+                'total_amount': float(payment_stats['unpaid_amount'] or 0)
+            },
+            'partial': {
+                'count': payment_stats['partial_count'],
+                'percentage': round(partial_percentage, 2),
+                'total_amount': float(payment_stats['partial_amount'] or 0)
+            }
+        }
+
     def get(self, request):
         """
         Get separated statistics for expenses and revenue:
         - Total expenses: bills only (water + electricity + purchase)
         - Total revenue: client factures only
-        - Percentage breakdown by category (expenses calculated independently from revenue)
+        - Percentage breakdown by category (calculated based on total of expenses + revenue)
+        - Payment status statistics for factures
         """
         bills = self.get_accessible_bills(request.user)
         factures = self.get_accessible_factures(request.user)
@@ -79,19 +136,25 @@ class BillStatisticsView(APIView):
         factures_total = factures.aggregate(total=Sum('final_total'))[
             'total'] or 0  # REVENUE
 
+        # Calculate combined total for percentage calculations
+        combined_total = bills_total + factures_total
+
+        # Calculate payment status statistics
+        payment_status_stats = self.calculate_payment_status_stats(factures)
+
         # Calculate statistics by category for expenses (bills only)
         expense_category_stats = {}
 
-        # Process bill categories - percentages based on bills total only
+        # Process bill categories - percentages based on combined total (expenses + revenue)
         for category_code, category_name in Bill.CATEGORY_CHOICES:
             category_bills = bills.filter(category=category_code)
             category_sum = category_bills.aggregate(
                 total=Sum('amount'))['total'] or 0
             category_count = category_bills.count()
 
-            # Calculate percentage based on bills total only (expenses)
-            percentage = (category_sum / bills_total *
-                          100) if bills_total > 0 else 0
+            # Calculate percentage based on combined total (expenses + revenue)
+            percentage = (category_sum / combined_total *
+                          100) if combined_total > 0 else 0
 
             expense_category_stats[category_code] = {
                 'name': category_name,
@@ -101,13 +164,16 @@ class BillStatisticsView(APIView):
                 'type': 'expense'
             }
 
-        # Add client factures as separate revenue category
+        revenue_percentage = (
+            factures_total / combined_total * 100) if combined_total > 0 else 0
+
         revenue_category_stats = {
             'client': {
                 'name': 'Client Factures',
                 'total_amount': float(factures_total),
                 'count': factures.count(),
-                'percentage': 100.0 if factures_total > 0 else 0.0,  # 100% of revenue
+                # Based on combined total
+                'percentage': round(revenue_percentage, 2),
                 'type': 'revenue'
             }
         }
@@ -116,7 +182,7 @@ class BillStatisticsView(APIView):
         all_category_stats = {
             **expense_category_stats, **revenue_category_stats}
 
-        # Group utilities for summary
+        # Group utilities for summary - percentages based on combined total
         utilities_total = (
             expense_category_stats['water']['total_amount'] +
             expense_category_stats['electricity']['total_amount']
@@ -137,11 +203,17 @@ class BillStatisticsView(APIView):
         response_data = {
             'total_expenses': float(bills_total),      # Bills only
             'total_revenue': float(factures_total),    # Factures only
+            # New field showing total for percentage calculation
+            'combined_total': float(combined_total),
             'net_result': float(net_result),           # Revenue - Expenses
             'net_result_type': net_result_type,        # "profit" or "loss"
             'total_bills_count': bills.count(),
             'total_factures_count': factures.count(),
             'total_items_count': bills.count() + factures.count(),
+
+            # Payment status statistics
+            'payment_status_stats': payment_status_stats,
+
             'breakdown_by_type': {
                 'expenses': {
                     'total': float(bills_total),
@@ -178,7 +250,7 @@ class BillStatisticsView(APIView):
                     'name': 'Client Factures',
                     'total_amount': revenue_category_stats['client']['total_amount'],
                     'count': revenue_category_stats['client']['count'],
-                    'percentage': 100.0,
+                    'percentage': revenue_category_stats['client']['percentage'],
                     'type': 'revenue'
                 }
             }

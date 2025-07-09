@@ -13,6 +13,7 @@ import stripe
 from django.conf import settings
 import requests
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class FactureViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 logger.error(
                     f"PDF Generation Error for facture {facture_id}: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 response.data['pdf_generation_error'] = str(e)
 
         return response
@@ -166,6 +168,7 @@ class FactureViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             logger.error(f"Error calculating total revenue: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return Response(
                 {'error': 'An error occurred while calculating total revenue.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -179,25 +182,32 @@ class FactureViewSet(viewsets.ModelViewSet):
             logger.info(
                 f"Download PDF requested for facture {facture.facture_number}")
 
+            # Check if PDF exists and is accessible
             if hasattr(facture, 'pdf_url') and facture.pdf_url:
                 logger.info(f"Redirecting to existing PDF: {facture.pdf_url}")
                 return HttpResponseRedirect(facture.pdf_url)
 
+            # Generate new PDF if none exists
             logger.info("No existing PDF found, generating new one")
             pdf_url = generate_and_upload_facture_pdf(facture)
             if pdf_url:
                 logger.info(f"New PDF generated, redirecting to: {pdf_url}")
                 return HttpResponseRedirect(pdf_url)
 
+            # Fallback: serve PDF directly
             logger.info("Cloudinary upload failed, serving PDF directly")
             pdf_buffer = generate_facture_pdf(facture)
-            response = HttpResponse(
-                pdf_buffer.getvalue(), content_type='application/pdf')
-            response['Content-Disposition'] = f'attachment; filename="facture_{facture.facture_number}.pdf"'
-            return response
+            if pdf_buffer:
+                response = HttpResponse(
+                    pdf_buffer.getvalue(), content_type='application/pdf')
+                response['Content-Disposition'] = f'attachment; filename="facture_{facture.facture_number}.pdf"'
+                return response
+            else:
+                raise Exception("Failed to generate PDF buffer")
 
         except Exception as e:
             logger.error(f"Error in download_pdf: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'])
@@ -224,37 +234,71 @@ class FactureViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             logger.error(f"Error regenerating PDF: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['get'])
     def view_pdf(self, request, pk=None):
         """Get PDF URL for viewing in browser with access control"""
         try:
-            facture = self.get_object()
-            user = request.user
+            # Get the facture object
+            try:
+                facture = self.get_object()
+                logger.info(
+                    f"PDF view requested for facture {facture.facture_number}")
+            except Exception as e:
+                logger.error(f"Error getting facture object: {str(e)}")
+                return Response({'error': 'Facture not found'}, status=status.HTTP_404_NOT_FOUND)
 
+            # Check permissions
+            user = request.user
+            logger.info(
+                f"User {user.username} (role: {user.role}) requesting PDF for facture {facture.facture_number}")
+
+            # Allow ADMIN and ACCOUNTANT to view all factures
             if user.role not in ['ADMIN', 'ACCOUNTANT']:
-                if not facture.client or facture.client != user:
+                # Check if user is the client of this facture
+                if not facture.client:
+                    logger.error(
+                        f"Facture {facture.facture_number} has no client assigned")
+                    return Response({'error': 'Facture has no client assigned'}, status=status.HTTP_400_BAD_REQUEST)
+
+                if facture.client != user:
+                    logger.warning(
+                        f"User {user.username} denied access to facture {facture.facture_number} (belongs to {facture.client.username})")
                     return Response({'error': 'You do not have permission to view this facture.'}, status=status.HTTP_403_FORBIDDEN)
 
-            logger.info(
-                f"PDF view requested for facture {facture.facture_number}")
+            # Check if PDF already exists
+            if hasattr(facture, 'pdf_url') and facture.pdf_url:
+                logger.info(f"Returning existing PDF URL: {facture.pdf_url}")
+                return Response({
+                    'pdf_url': facture.pdf_url,
+                    'facture_number': facture.facture_number
+                })
 
-            if not hasattr(facture, 'pdf_url') or not facture.pdf_url:
-                logger.info("PDF doesn't exist, generating new one")
+            # Generate PDF if it doesn't exist
+            logger.info("PDF doesn't exist, generating new one")
+            try:
                 pdf_url = generate_and_upload_facture_pdf(facture)
-                if not pdf_url:
+                if pdf_url:
+                    logger.info(f"PDF generated successfully: {pdf_url}")
+                    return Response({
+                        'pdf_url': pdf_url,
+                        'facture_number': facture.facture_number
+                    })
+                else:
                     logger.error("Failed to generate PDF for viewing")
                     return Response({'error': 'Failed to generate PDF'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-            return Response({
-                'pdf_url': facture.pdf_url,
-                'facture_number': facture.facture_number
-            })
+            except Exception as pdf_error:
+                logger.error(f"Error generating PDF: {str(pdf_error)}")
+                logger.error(
+                    f"PDF generation traceback: {traceback.format_exc()}")
+                return Response({'error': f'Failed to generate PDF: {str(pdf_error)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         except Exception as e:
             logger.error(f"Error in view_pdf: {str(e)}")
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return Response({'error': f'Internal server error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'])
     def debug_facture(self, request):
@@ -290,6 +334,7 @@ class FactureViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             logger.error(f"Debug error: {str(e)}")
+            logger.error(f"Debug traceback: {traceback.format_exc()}")
             return Response({'error': str(e), 'debug': True}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'])
@@ -320,6 +365,7 @@ class FactureViewSet(viewsets.ModelViewSet):
             })
         except Exception as e:
             logger.error(f"Error creating payment intent: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'])
@@ -353,4 +399,5 @@ class FactureViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             logger.error(f"Error confirming payment: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

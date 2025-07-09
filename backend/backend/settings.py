@@ -10,7 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 import os
-import dj_database_url 
+import dj_database_url
 from pathlib import Path
 from dotenv import load_dotenv
 import pytesseract
@@ -20,11 +20,29 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-FIREBASE_CREDENTIAL_PATH = os.path.join(
-    BASE_DIR, 'firebase', 'serviceAccountKey.json')
+FIREBASE_CREDENTIALS_PATH = os.getenv(
+    'FIREBASE_CREDENTIALS_PATH', 'firebase/serviceAccountKey.json')
+FIREBASE_CREDENTIAL_PATH = os.path.join(BASE_DIR, FIREBASE_CREDENTIALS_PATH)
+
 os.makedirs(os.path.dirname(FIREBASE_CREDENTIAL_PATH), exist_ok=True)
+
 FIREBASE_SERVER_KEY = os.getenv(
-    'FIREBASE_SERVER_KEY', "AIzaSyAVoWXdutFTZhfITp5xSDUhR6wMvkw7IHc")
+    'FIREBASE_SERVER_KEY', "")
+
+
+def initialize_firebase_once():
+    """Initialize Firebase when Django starts"""
+    try:
+        # Only initialize if not already done
+        import firebase_admin
+        if not firebase_admin._apps:
+            from tickets.firebase_service import initialize_firebase
+            initialize_firebase()
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to initialize Firebase on startup: {e}")
+
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
@@ -81,14 +99,11 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
-# Database Configuration - Updated for Render
 if os.environ.get('DATABASE_URL'):
-    # Production database (Render) - Use the Internal Database URL
     DATABASES = {
         'default': dj_database_url.parse(os.environ.get('DATABASE_URL'))
     }
 else:
-    # Development database (local)
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
@@ -171,10 +186,6 @@ REST_PASSWORDRESET = {
 
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
 
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -235,4 +246,7 @@ LOGGING = {
 
 POPPLER_PATH = None
 ALLOWED_HOSTS = ['*']
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.31.146']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.31.146', '[::1]', '*']
+
+
+initialize_firebase_once()

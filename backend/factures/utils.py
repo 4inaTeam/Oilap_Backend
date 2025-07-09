@@ -40,8 +40,58 @@ def generate_qr_code(data):
         return None
 
 
+def get_facture_products(facture):
+    """Safely get products for a facture with detailed logging"""
+    try:
+        logger.info(f"Getting products for facture {facture.id}")
+
+        # Check if facture has products attribute
+        if not hasattr(facture, 'products'):
+            logger.error(f"Facture {facture.id} has no 'products' attribute")
+            return []
+
+        # Get all products for this facture
+        try:
+            all_products = facture.products.all()
+            logger.info(
+                f"Found {all_products.count()} total products for facture {facture.id}")
+
+            # Filter for done products
+            done_products = all_products.filter(status='done')
+            logger.info(
+                f"Found {done_products.count()} done products for facture {facture.id}")
+
+            # Log each product
+            for product in done_products:
+                logger.info(f"Product {product.id}: quality={product.quality}, "
+                            f"quantity={product.quantity}, price={product.price}, "
+                            f"status={product.status}, origine={getattr(product, 'origine', 'N/A')}")
+
+            return list(done_products)
+
+        except Exception as e:
+            logger.error(
+                f"Error querying products for facture {facture.id}: {str(e)}")
+            return []
+
+    except Exception as e:
+        logger.error(f"Error in get_facture_products: {str(e)}")
+        return []
+
+
+def safe_decimal_conversion(value, default=Decimal('0.00')):
+    """Safely convert a value to Decimal"""
+    try:
+        if value is None:
+            return default
+        return Decimal(str(value))
+    except (ValueError, TypeError, Exception) as e:
+        logger.warning(f"Error converting value {value} to Decimal: {e}")
+        return default
+
+
 def generate_facture_pdf(facture):
-    """Generate professional PDF with proper data access"""
+    """Generate professional PDF with proper data access and error handling"""
     try:
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -52,29 +102,51 @@ def generate_facture_pdf(facture):
         styles = getSampleStyleSheet()
 
         # Debug: Log facture information
+        logger.info(f"Starting PDF generation for facture ID: {facture.id}")
         logger.info(
-            f"Generating PDF for facture ID: {facture.id}, Number: {getattr(facture, 'facture_number', 'N/A')}")
+            f"Facture number: {getattr(facture, 'facture_number', 'N/A')}")
+        logger.info(f"Facture client: {getattr(facture, 'client', 'N/A')}")
 
-        # FORCE recalculate totals before PDF generation to ensure fresh data
-        facture.calculate_totals()
-        
-        # Refresh facture from database to get latest calculated values
-        facture.refresh_from_db()
+        # FORCE recalculate totals before PDF generation
+        try:
+            facture.calculate_totals()
+            logger.info("Facture totals recalculated successfully")
+        except Exception as e:
+            logger.error(f"Error recalculating totals: {e}")
+
+        # Refresh facture from database
+        try:
+            facture.refresh_from_db()
+            logger.info("Facture refreshed from database")
+        except Exception as e:
+            logger.error(f"Error refreshing facture from database: {e}")
 
         # Get client information safely
         client_name = "N/A"
         client_email = "N/A"
-        if hasattr(facture, 'client') and facture.client:
-            if hasattr(facture.client, 'get_full_name'):
-                client_name = facture.client.get_full_name() or facture.client.username
-            else:
-                client_name = facture.client.username
-            client_email = getattr(facture.client, 'email', 'N/A')
+        try:
+            if hasattr(facture, 'client') and facture.client:
+                if hasattr(facture.client, 'get_full_name'):
+                    client_name = facture.client.get_full_name() or facture.client.username
+                else:
+                    client_name = facture.client.username
+                client_email = getattr(facture.client, 'email', 'N/A')
+                logger.info(
+                    f"Client info - Name: {client_name}, Email: {client_email}")
+        except Exception as e:
+            logger.error(f"Error getting client info: {e}")
 
-        logger.info(
-            f"Client info - Name: {client_name}, Email: {client_email}")
+        # Get facture details safely
+        facture_number = getattr(
+            facture, 'facture_number', f'FAC-{facture.id}')
+        created_at = getattr(facture, 'created_at', None)
+        if created_at:
+            created_date = created_at.strftime('%d %b %Y')
+        else:
+            from datetime import datetime
+            created_date = datetime.now().strftime('%d %b %Y')
 
-        # Company header with REAL data
+        # Company header
         header_data = [
             ['', 'Facture'],
             ['', 'Nom de l\'usine'],
@@ -83,8 +155,8 @@ def generate_facture_pdf(facture):
             ['', ''],
             ['', f'Client: {client_name}'],
             ['', f'Email: {client_email}'],
-            [f'NUMÉRO DE FACTURE :', f'{facture.facture_number}'],
-            [f'DATE DE FACTURE :', facture.created_at.strftime('%d %b %Y')],
+            [f'NUMÉRO DE FACTURE :', f'{facture_number}'],
+            [f'DATE DE FACTURE :', created_date],
         ]
 
         header_table = Table(header_data, colWidths=[3*inch, 3*inch])
@@ -104,70 +176,84 @@ def generate_facture_pdf(facture):
         story.append(header_table)
         story.append(Spacer(1, 30))
 
-        # Products table with CORRECT data access
+        # Products table with ENHANCED error handling
         product_data = [
             ['Produit', 'Quantité', 'Production', 'Prix Unitaire', 'Total']
         ]
 
+        # Get facture totals safely
+        total_amount = safe_decimal_conversion(
+            getattr(facture, 'total_amount', 0))
+        tva_amount = safe_decimal_conversion(getattr(facture, 'tva_amount', 0))
+        final_total = safe_decimal_conversion(
+            getattr(facture, 'final_total', 0))
+
         logger.info(
-            f"Facture totals before PDF generation - Total: {facture.total_amount}, TVA: {facture.tva_amount}, Final: {facture.final_total}")
+            f"Facture totals - Total: {total_amount}, TVA: {tva_amount}, Final: {final_total}")
 
-        # Access products correctly
-        if hasattr(facture, 'products'):
-            try:
-                # Get only products that are 'done' and linked to this facture
-                products = facture.products.filter(status='done')
-                product_count = products.count()
-                logger.info(
-                    f"Found {product_count} done products for facture {facture.facture_number}")
+        # Get products safely
+        products = get_facture_products(facture)
 
-                if product_count > 0:
-                    for product in products:
-                        logger.info(f"Processing product ID: {product.id}, Quality: {product.quality}, "
-                                    f"Quantity: {product.quantity}, Price: {product.price}, Status: {product.status}")
+        if products:
+            logger.info(f"Processing {len(products)} products for PDF")
 
-                        quantity = product.quantity
-                        # product.price is already the total price (base_price * quantity)
-                        total_price = Decimal(str(product.price))
+            for product in products:
+                try:
+                    # Get product data safely
+                    quality = getattr(product, 'quality', 'N/A')
+                    quantity = safe_decimal_conversion(
+                        getattr(product, 'quantity', 0))
+                    price = safe_decimal_conversion(
+                        getattr(product, 'price', 0))
+                    origine = getattr(product, 'origine', '')
 
-                        # Calculate unit price from total price and quantity
-                        unit_price = total_price / \
-                            quantity if quantity > 0 else Decimal('0')
+                    # Calculate unit price
+                    unit_price = price / \
+                        quantity if quantity > 0 else Decimal('0')
 
-                        # Get quality display name
-                        quality_display = dict(product.QUALITY_CHOICES).get(
-                            product.quality, product.quality)
+                    # Get quality display name
+                    quality_display = quality
+                    if hasattr(product, 'QUALITY_CHOICES'):
+                        quality_display = dict(
+                            product.QUALITY_CHOICES).get(quality, quality)
 
-                        # Build product description
-                        product_description = f'Qualité {quality_display}'
-                        if product.origine:
-                            product_description += f' - {product.origine}'
+                    # Build product description
+                    product_description = f'Qualité {quality_display}'
+                    if origine:
+                        product_description += f' - {origine}'
 
-                        product_data.append([
-                            product_description,
-                            f'{quantity} Kg',
-                            f'{quantity} L',
-                            f'{unit_price:.2f} DT',
-                            f'{total_price:.2f} DT'
-                        ])
+                    product_data.append([
+                        product_description,
+                        f'{quantity} Kg',
+                        f'{quantity} L',
+                        f'{unit_price:.2f} DT',
+                        f'{price:.2f} DT'
+                    ])
 
-                        logger.info(
-                            f"Added product to PDF: {product_description}, Total: {total_price}")
-                else:
-                    logger.warning("No done products found for this facture")
-                    product_data.append(
-                        ['Aucun produit', '0 Kg', '0 L', '0.00 DT', '0.00 DT'])
+                    logger.info(
+                        f"Added product to PDF: {product_description}, Price: {price}")
 
-            except Exception as e:
-                logger.error(
-                    f"Error accessing products: {str(e)}", exc_info=True)
-                product_data.append(
-                    ['Erreur produit', '0 Kg', '0 L', '0.00 DT', '0.00 DT'])
+                except Exception as e:
+                    logger.error(
+                        f"Error processing product {getattr(product, 'id', 'unknown')}: {e}")
+                    product_data.append([
+                        'Produit avec erreur',
+                        '0 Kg',
+                        '0 L',
+                        '0.00 DT',
+                        '0.00 DT'
+                    ])
         else:
-            logger.error("Facture object does not have 'products' attribute")
-            product_data.append(
-                ['Aucun produit trouvé', '0 Kg', '0 L', '0.00 DT', '0.00 DT'])
+            logger.warning(f"No products found for facture {facture.id}")
+            product_data.append([
+                'Aucun produit',
+                '0 Kg',
+                '0 L',
+                '0.00 DT',
+                '0.00 DT'
+            ])
 
+        # Create products table
         product_table = Table(product_data, colWidths=[
                               2*inch, 1*inch, 1*inch, 1*inch, 1*inch])
         product_table.setStyle(TableStyle([
@@ -186,15 +272,7 @@ def generate_facture_pdf(facture):
         story.append(product_table)
         story.append(Spacer(1, 40))
 
-        # Use the facture's calculated totals directly (NO CREDIT CARD FEE)
-        total_amount = facture.total_amount
-        tva_amount = facture.tva_amount
-        final_total = facture.final_total  # This now excludes credit card fee
-
-        logger.info(
-            f"Using facture totals for PDF - Base: {total_amount}, TVA: {tva_amount}, Final: {final_total}")
-
-        # Signature and totals section with REAL data (NO CREDIT CARD FEE SHOWN)
+        # Signature and totals section
         signature_totals_data = [
             ['Signature', '', 'Total', f'{total_amount:.2f} DT'],
             ['', '', 'TVA', f'{tva_amount:.2f} DT'],
@@ -233,8 +311,8 @@ def generate_facture_pdf(facture):
 
         payment_para = Paragraph(payment_info, styles['Normal'])
 
-        # Generate QR code with REAL facture data
-        qr_data = f"Facture: {facture.facture_number}\nMontant: {final_total:.2f} DT\nClient: {client_name}\nDate: {facture.created_at.strftime('%Y-%m-%d')}"
+        # Generate QR code
+        qr_data = f"Facture: {facture_number}\nMontant: {final_total:.2f} DT\nClient: {client_name}\nDate: {created_date}"
         qr_buffer = generate_qr_code(qr_data)
 
         if qr_buffer:
@@ -253,8 +331,7 @@ def generate_facture_pdf(facture):
         doc.build(story)
         buffer.seek(0)
 
-        logger.info(
-            f"PDF generated successfully for facture {facture.facture_number}")
+        logger.info(f"PDF generated successfully for facture {facture_number}")
         return buffer
 
     except Exception as e:
@@ -294,10 +371,14 @@ def upload_pdf_to_cloudinary(pdf_buffer, public_id):
 def generate_and_upload_facture_pdf(facture, force_regenerate=False):
     """Main function to generate PDF and upload to Cloudinary"""
     try:
+        # Log initial state
+        logger.info(f"Starting PDF generation for facture {facture.id}")
+        logger.info(f"Force regenerate: {force_regenerate}")
+
         # Check if PDF already exists
         if hasattr(facture, 'pdf_url') and facture.pdf_url and not force_regenerate:
             logger.info(
-                f"PDF already exists for facture {getattr(facture, 'facture_number', facture.id)}")
+                f"PDF already exists for facture {facture.id}: {facture.pdf_url}")
             return facture.pdf_url
 
         facture_number = getattr(
@@ -305,14 +386,31 @@ def generate_and_upload_facture_pdf(facture, force_regenerate=False):
         logger.info(f"Generating PDF for facture {facture_number}")
 
         # Debug: Log facture data before PDF generation
-        logger.info(f"Facture data - ID: {facture.id}, Client: {facture.client}, "
-                    f"Total: {facture.total_amount}, Products count: {facture.products.count() if hasattr(facture, 'products') else 'N/A'}")
+        logger.info(
+            f"Facture data - ID: {facture.id}, Client: {facture.client}")
+
+        # Check products count
+        try:
+            if hasattr(facture, 'products'):
+                products_count = facture.products.count()
+                done_products_count = facture.products.filter(
+                    status='done').count()
+                logger.info(
+                    f"Products count: {products_count}, Done products: {done_products_count}")
+            else:
+                logger.warning(
+                    f"Facture {facture.id} has no products attribute")
+        except Exception as e:
+            logger.error(f"Error checking products count: {e}")
 
         # Generate PDF
         pdf_buffer = generate_facture_pdf(facture)
         if not pdf_buffer:
             logger.error("Failed to generate PDF buffer")
             return None
+
+        logger.info(
+            f"PDF buffer created successfully, size: {len(pdf_buffer.getvalue())} bytes")
 
         # Upload to Cloudinary
         public_id = f"facture_{facture_number}_{facture.id}"

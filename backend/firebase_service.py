@@ -5,6 +5,8 @@ import json
 
 
 def initialize_firebase():
+    cred = credentials.Certificate("backend/ooillab-ce5bd-firebase-adminsdk-fbsvc-2292b47a83")
+    firebase_admin.initialize_app(cred)
     # Check if we're in a production environment (like Render)
     firebase_creds = os.getenv('FIREBASE_CREDENTIALS_JSON')
 
