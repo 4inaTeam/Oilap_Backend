@@ -1,3 +1,4 @@
+from django.views.decorators.http import require_http_methods
 import logging
 from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
@@ -14,6 +15,11 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import inch
+
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.http import JsonResponse
 
 from .models import Product
 from .serializers import ProductSerializer
@@ -454,171 +460,260 @@ class ProductReportView(APIView):
         return response
 
 
-class SingleProductPDFView(APIView):
+@method_decorator(csrf_exempt, name='dispatch')
+class SingleProductPDFView(View):
     """
     Download PDF report for a specific product by ID
-    - Admins and employees can view any product
-    - Clients can only view their own products
+    - Admins and employees can download any product  
+    - Clients can only download their own products
+
+    Uses Django View instead of DRF APIView to avoid content negotiation issues
     """
-    permission_classes = [permissions.IsAuthenticated]
+
+    def dispatch(self, request, *args, **kwargs):
+        # Manual authentication check for DRF tokens
+        auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+
+        if not auth_header.startswith('Bearer '):
+            return JsonResponse({'error': 'Authentication required'}, status=401)
+
+        # Extract token
+        token = auth_header.split(' ')[1] if len(
+            auth_header.split(' ')) > 1 else None
+
+        if not token:
+            return JsonResponse({'error': 'Invalid token format'}, status=401)
+
+        # Authenticate user using DRF token
+        from rest_framework.authtoken.models import Token
+        from rest_framework_simplejwt.tokens import AccessToken
+        from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+
+        user = None
+
+        # Try JWT token first
+        try:
+            access_token = AccessToken(token)
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            user = User.objects.get(id=access_token['user_id'])
+        except (InvalidToken, TokenError, Exception):
+            # Try DRF token authentication
+            try:
+                token_obj = Token.objects.get(key=token)
+                user = token_obj.user
+            except Token.DoesNotExist:
+                pass
+
+        if not user or not user.is_authenticated:
+            return JsonResponse({'error': 'Invalid or expired token'}, status=401)
+
+        # Set user on request
+        request.user = user
+
+        return super().dispatch(request, *args, **kwargs)
 
     def get(self, request, product_id):
         try:
+            # Debug logging
+            logger.info(
+                f"PDF download request for product {product_id} by user {request.user.id}")
+            logger.info(
+                f"User: {request.user.username}, Role: {getattr(request.user, 'role', 'No role')}")
+
+            # Check if user has role attribute
+            if not hasattr(request.user, 'role'):
+                logger.error(f"User {request.user.id} has no role attribute")
+                return JsonResponse({'error': 'User role not found'}, status=403)
+
             # Get the product with related data
-            product = Product.objects.select_related(
-                'client', 'created_by', 'facture').get(id=product_id)
+            try:
+                product = Product.objects.select_related(
+                    'client', 'created_by').get(id=product_id)
+                logger.info(
+                    f"Product found: {product.id}, Owner: {product.client.username if product.client else 'None'}")
+            except Product.DoesNotExist:
+                logger.error(f"Product {product_id} not found")
+                return JsonResponse({'error': 'Product not found'}, status=404)
 
             # Apply role-based access control
             user = request.user
-            if user.role == 'CLIENT':
+            user_role = user.role.upper()  # Ensure uppercase for comparison
+
+            logger.info(f"Checking permissions - User role: {user_role}")
+
+            # Permission logic
+            has_permission = False
+
+            if user_role in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
+                # Admin, Employee, and Accountant can access any product
+                has_permission = True
+                logger.info(
+                    f"Access granted: {user_role} can access any product")
+
+            elif user_role == 'CLIENT':
                 # Clients can only access their own products
-                if product.client != user:
-                    return Response(
-                        {'error': 'You do not have permission to access this product'},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
-            elif user.role not in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
-                # Unknown role - deny access
-                return Response(
-                    {'error': 'You do not have permission to access product reports'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                if product.client and product.client == user:
+                    has_permission = True
+                    logger.info(
+                        f"Access granted: Client can access their own product")
+                else:
+                    logger.error(
+                        f"Access denied: Client {user.id} tried to access product owned by {product.client.id if product.client else 'None'}")
+
+            else:
+                logger.error(f"Access denied: Unknown role {user_role}")
+
+            if not has_permission:
+                return JsonResponse({
+                    'error': 'You do not have permission to access this product'
+                }, status=403)
+
+            logger.info(
+                f"Permission check passed for user {user.id} to access product {product_id}")
 
             # Generate PDF
-            return self._generate_product_pdf(product, user)
+            pdf_data = self._generate_product_pdf(product, user)
 
-        except Product.DoesNotExist:
-            return Response({'error': 'Product not found'}, status=404)
+            # Create HttpResponse with proper headers
+            response = HttpResponse(pdf_data, content_type='application/pdf')
+
+            # Customize filename based on user role
+            if user.role.upper() == 'CLIENT':
+                filename = f'mon_produit_{product.id}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf'
+            else:
+                filename = f'produit_{product.id}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf'
+
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+            # Add CORS headers
+            response['Access-Control-Allow-Origin'] = '*'
+            response['Access-Control-Allow-Methods'] = 'GET'
+            response['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, Accept'
+            response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+
+            # Add cache control
+            response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response['Pragma'] = 'no-cache'
+            response['Expires'] = '0'
+
+            logger.info(
+                f"PDF response prepared successfully for product {product.id}")
+            return response
+
         except Exception as e:
-            logger.error(
-                f"Error generating product PDF for user {request.user.id}: {str(e)}")
-            return Response({'error': 'Failed to generate PDF'}, status=500)
+            logger.error(f"Error in PDF download: {str(e)}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return JsonResponse({'error': 'Failed to generate PDF'}, status=500)
 
     def _generate_product_pdf(self, product, user):
-        """Generate PDF report for a single product"""
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+        """Generate PDF report for a single product and return binary data"""
+        try:
+            logger.info(f"Starting PDF generation for product {product.id}")
 
-        elements = []
-        styles = getSampleStyleSheet()
-        title_style = styles['Title']
-        heading_style = styles['Heading2']
-        normal_style = styles['Normal']
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(
+                buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
 
-        # Customize title based on user role
-        if user.role == 'CLIENT':
-            title = Paragraph(f"Mon Produit #{product.id}", title_style)
-        else:
-            title = Paragraph(f"Rapport du Produit #{product.id}", title_style)
+            elements = []
+            styles = getSampleStyleSheet()
+            title_style = styles['Title']
+            heading_style = styles['Heading2']
+            normal_style = styles['Normal']
 
-        elements.append(title)
-        elements.append(Spacer(1, 20))
+            # Customize title based on user role
+            if user.role.upper() == 'CLIENT':
+                title = Paragraph(f"Mon Produit #{product.id}", title_style)
+            else:
+                title = Paragraph(
+                    f"Rapport du Produit #{product.id}", title_style)
 
-        date_info = Paragraph(
-            f"Généré le: {timezone.now().strftime('%d/%m/%Y à %H:%M')}", normal_style)
-        elements.append(date_info)
-        elements.append(Spacer(1, 30))
+            elements.append(title)
+            elements.append(Spacer(1, 20))
 
-        info_title = Paragraph("Informations du Produit", heading_style)
-        elements.append(info_title)
-        elements.append(Spacer(1, 15))
-
-        # Build product data based on user role
-        if user.role == 'CLIENT':
-            # Simplified data for clients (no sensitive client info or created_by)
-            product_data = [
-                ['Champ', 'Valeur'],
-                ['ID du Produit', str(product.id)],
-                ['Qualité', product.get_quality_display()],
-                ['Origine', product.origine or 'N/A'],
-                ['Quantité', f"{product.quantity} Kg"],
-                ['Prix Unitaire',
-                    f"{float(product.price/product.quantity):.2f} DT" if product.price and product.quantity else '0 DT'],
-                ['Prix Total',
-                    f"{float(product.price):.2f} DT" if product.price else '0 DT'],
-                ['Statut', product.get_status_display()],
-                ['Statut de Paiement', product.get_payement_display()],
-                ['Date de Création', product.created_at.strftime(
-                    '%d/%m/%Y à %H:%M') if product.created_at else 'N/A'],
-                ['Date de Fin', product.end_time.strftime(
-                    '%d/%m/%Y à %H:%M') if product.end_time else 'N/A'],
-                ['Temps d\'Estimation', f"{product.estimation_time} minutes"],
-            ]
-        else:
-            # Full data for admin/employee
-            product_data = [
-                ['Champ', 'Valeur'],
-                ['ID du Produit', str(product.id)],
-                ['Client', product.client.username if product.client else 'N/A'],
-                ['CIN Client', product.client.cin if product.client else 'N/A'],
-                ['Email Client', product.client.email if product.client else 'N/A'],
-                ['Qualité', product.get_quality_display()],
-                ['Origine', product.origine or 'N/A'],
-                ['Quantité', f"{product.quantity} Kg"],
-                ['Prix Unitaire',
-                    f"{float(product.price/product.quantity):.2f} DT" if product.price and product.quantity else '0 DT'],
-                ['Prix Total',
-                    f"{float(product.price):.2f} DT" if product.price else '0 DT'],
-                ['Statut', product.get_status_display()],
-                ['Statut de Paiement', product.get_payement_display()],
-                ['Date de Création', product.created_at.strftime(
-                    '%d/%m/%Y à %H:%M') if product.created_at else 'N/A'],
-                ['Date de Fin', product.end_time.strftime(
-                    '%d/%m/%Y à %H:%M') if product.end_time else 'N/A'],
-                ['Temps d\'Estimation', f"{product.estimation_time} minutes"],
-                ['Créé par', product.created_by.username if product.created_by else 'N/A'],
-            ]
-
-        table = Table(product_data, colWidths=[2.5*inch, 4*inch])
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('TOPPADDING', (0, 1), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
-        ]))
-
-        elements.append(table)
-
-        # Add facture information if available
-        # For clients, only show if they own the product (already verified above)
-        if product.facture:
+            date_info = Paragraph(
+                f"Généré le: {timezone.now().strftime('%d/%m/%Y à %H:%M')}", normal_style)
+            elements.append(date_info)
             elements.append(Spacer(1, 30))
-            facture_title = Paragraph(
-                "Informations de Facturation", heading_style)
-            elements.append(facture_title)
+
+            info_title = Paragraph("Informations du Produit", heading_style)
+            elements.append(info_title)
             elements.append(Spacer(1, 15))
 
-            facture_data = [
-                ['Champ', 'Valeur'],
-                ['Numéro de Facture', product.facture.facture_number],
-                ['Statut de Paiement', product.facture.get_payment_status_display()],
-                ['Montant Total Facture',
-                    f"{float(product.facture.total_amount):.2f} DT" if product.facture.total_amount else '0 DT'],
-                ['TVA', f"{float(product.facture.tva_amount):.2f} DT" if product.facture.tva_amount else '0 DT'],
-                ['Montant Final',
-                    f"{float(product.facture.final_total):.2f} DT" if product.facture.final_total else '0 DT'],
-            ]
+            # Build product data based on user role
+            if user.role.upper() == 'CLIENT':
+                # Simplified data for clients
+                product_data = [
+                    ['Champ', 'Valeur'],
+                    ['ID du Produit', str(product.id)],
+                    ['Qualité', product.get_quality_display() if hasattr(
+                        product, 'get_quality_display') else str(product.quality)],
+                    ['Origine', product.origine or 'N/A'],
+                    ['Quantité', f"{product.quantity} Kg"],
+                    ['Prix Total',
+                        f"{float(product.price):.2f} DT" if product.price else '0 DT'],
+                    ['Statut', product.get_status_display() if hasattr(
+                        product, 'get_status_display') else str(product.status)],
+                    ['Date de Création', product.created_at.strftime(
+                        '%d/%m/%Y à %H:%M') if product.created_at else 'N/A'],
+                    ['Date de Fin', product.end_time.strftime(
+                        '%d/%m/%Y à %H:%M') if product.end_time else 'N/A'],
+                ]
+            else:
+                # Full data for admin/employee/accountant
+                product_data = [
+                    ['Champ', 'Valeur'],
+                    ['ID du Produit', str(product.id)],
+                    ['Client', product.client.username if product.client else 'N/A'],
+                    ['CIN Client', getattr(
+                        product.client, 'cin', 'N/A') if product.client else 'N/A'],
+                    ['Email Client', product.client.email if product.client else 'N/A'],
+                    ['Qualité', product.get_quality_display() if hasattr(
+                        product, 'get_quality_display') else str(product.quality)],
+                    ['Origine', product.origine or 'N/A'],
+                    ['Quantité', f"{product.quantity} Kg"],
+                    ['Prix Total',
+                        f"{float(product.price):.2f} DT" if product.price else '0 DT'],
+                    ['Statut', product.get_status_display() if hasattr(
+                        product, 'get_status_display') else str(product.status)],
+                    ['Date de Création', product.created_at.strftime(
+                        '%d/%m/%Y à %H:%M') if product.created_at else 'N/A'],
+                    ['Date de Fin', product.end_time.strftime(
+                        '%d/%m/%Y à %H:%M') if product.end_time else 'N/A'],
+                    ['Créé par', product.created_by.username if product.created_by else 'N/A'],
+                ]
 
-            facture_table = Table(
-                facture_data, colWidths=[2.5*inch, 4*inch])
-            facture_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            # Add payment status if available
+            if hasattr(product, 'payement') or hasattr(product, 'get_payement_display'):
+                payment_status = (product.get_payement_display() if hasattr(product, 'get_payement_display')
+                                  else str(getattr(product, 'payement', 'N/A')))
+
+                if user.role.upper() == 'CLIENT':
+                    product_data.insert(-2,
+                                        ['Statut de Paiement', payment_status])
+                else:
+                    product_data.insert(-3,
+                                        ['Statut de Paiement', payment_status])
+
+            # Add estimation time if available
+            if hasattr(product, 'estimation_time') and product.estimation_time:
+                estimation_row = ['Temps d\'Estimation',
+                                  f"{product.estimation_time} minutes"]
+                if user.role.upper() == 'CLIENT':
+                    product_data.append(estimation_row)
+                else:
+                    product_data.insert(-1, estimation_row)
+
+            table = Table(product_data, colWidths=[2.5*inch, 4*inch])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, 0), (-1, 0), 12),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
                 ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
                 ('FONTSIZE', (0, 1), (-1, -1), 10),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black),
@@ -627,23 +722,118 @@ class SingleProductPDFView(APIView):
                 ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
             ]))
 
-            elements.append(facture_table)
+            elements.append(table)
+
+            logger.info(f"Building PDF document for product {product.id}")
+            doc.build(elements)
+            logger.info(
+                f"PDF document built successfully for product {product.id}")
+
+            buffer.seek(0)
+            pdf_data = buffer.getvalue()
+
+            logger.info(
+                f"PDF generated successfully, size: {len(pdf_data)} bytes")
+            return pdf_data
+
+        except Exception as e:
+            logger.error(f"Error in _generate_product_pdf: {str(e)}")
+            import traceback
+            logger.error(f"PDF generation traceback: {traceback.format_exc()}")
+            raise
+
+
+# Alternative: Even simpler function-based view
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def simple_product_pdf_download(request, product_id):
+    """
+    Simple function-based view for PDF download
+    """
+    try:
+        # Manual authentication
+        auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+        if not auth_header.startswith('Bearer '):
+            return JsonResponse({'error': 'Authentication required'}, status=401)
+
+        token = auth_header.split(' ')[1] if len(
+            auth_header.split(' ')) > 1 else None
+        if not token:
+            return JsonResponse({'error': 'Invalid token'}, status=401)
+
+        # Get user from token (simplified)
+        from rest_framework_simplejwt.tokens import AccessToken
+        from django.contrib.auth import get_user_model
+
+        try:
+            access_token = AccessToken(token)
+            User = get_user_model()
+            user = User.objects.get(id=access_token['user_id'])
+        except Exception:
+            return JsonResponse({'error': 'Invalid token'}, status=401)
+
+        # Get product
+        try:
+            product = Product.objects.select_related(
+                'client').get(id=product_id)
+        except Product.DoesNotExist:
+            return JsonResponse({'error': 'Product not found'}, status=404)
+
+        # Check permissions
+        if not hasattr(user, 'role'):
+            return JsonResponse({'error': 'No role'}, status=403)
+
+        user_role = user.role.upper()
+
+        if user_role in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
+            # Can access any product
+            pass
+        elif user_role == 'CLIENT':
+            if not product.client or product.client != user:
+                return JsonResponse({'error': 'Permission denied'}, status=403)
+        else:
+            return JsonResponse({'error': 'Invalid role'}, status=403)
+
+        # Generate simple PDF
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+
+        elements = []
+        styles = getSampleStyleSheet()
+
+        title = Paragraph(f"Product #{product.id} Report", styles['Title'])
+        elements.append(title)
+        elements.append(Spacer(1, 20))
+
+        content = f"""
+        <b>Product ID:</b> {product.id}<br/>
+        <b>Quality:</b> {product.quality}<br/>
+        <b>Origin:</b> {product.origine or 'N/A'}<br/>
+        <b>Quantity:</b> {product.quantity} Kg<br/>
+        <b>Price:</b> {float(product.price):.2f} DT<br/>
+        <b>Status:</b> {product.status}<br/>
+        """
+
+        if user_role != 'CLIENT':
+            content += f"<b>Client:</b> {product.client.username if product.client else 'N/A'}<br/>"
+
+        para = Paragraph(content, styles['Normal'])
+        elements.append(para)
 
         doc.build(elements)
-
         buffer.seek(0)
+
         response = HttpResponse(
             buffer.getvalue(), content_type='application/pdf')
-
-        # Customize filename based on user role
-        if user.role == 'CLIENT':
-            filename = f'mon_produit_{product.id}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf'
-        else:
-            filename = f'produit_{product.id}_{timezone.now().strftime("%Y%m%d_%H%M%S")}.pdf'
-
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['Content-Disposition'] = f'attachment; filename="product_{product.id}.pdf"'
 
         return response
+
+    except Exception as e:
+        logger.error(f"Simple PDF error: {str(e)}")
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 class ProductStatsView(APIView):

@@ -9,10 +9,11 @@ from .views import (
     AdminClientProductListView,
     CancelProductView,
     ProductReportView,
-    SingleProductPDFView,
+    SingleProductPDFView,          
+    simple_product_pdf_download,   
     ProductStatsView,
-    TotalQuantityView,     
-    OriginPercentageView,   
+    TotalQuantityView,
+    OriginPercentageView,
 )
 from django.conf import settings
 from django.conf.urls.static import static
@@ -24,6 +25,9 @@ urlpatterns = [
     path('<int:pk>/cancel/', CancelProductView.as_view(), name='product-cancel'),
 
     path('<int:product_id>/pdf/', SingleProductPDFView.as_view(), name='product-pdf'),
+
+    path('<int:product_id>/simple-pdf/',
+         simple_product_pdf_download, name='simple-product-pdf'),
 
     path('', ProductListView.as_view(), name='product-list'),
     path('client/products/', ClientProductListView.as_view(),

@@ -1,0 +1,15 @@
+Bonjour {{ client_name }},
+
+Votre ticket pour {{ product_name }} a été généré avec succès.
+
+Détails :
+- Facture : {{ facture_number }}
+- Produit : {{ product_name }} (Qualité: {{ product_quality }})
+- Quantité : {{ product_quantity }}
+- Date de création : {{ ticket_date|date:"d/m/Y à H:i" }}
+- Montant total : {{ facture_amount }} €
+- Date d'échéance : {{ due_date|date:"d/m/Y" }}
+- Statut : {{ payment_status }}
+
+Cordialement,
+L'équipe Ollap

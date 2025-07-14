@@ -26,8 +26,7 @@ FIREBASE_CREDENTIAL_PATH = os.path.join(BASE_DIR, FIREBASE_CREDENTIALS_PATH)
 
 os.makedirs(os.path.dirname(FIREBASE_CREDENTIAL_PATH), exist_ok=True)
 
-FIREBASE_SERVER_KEY = os.getenv(
-    'FIREBASE_SERVER_KEY', "")
+FIREBASE_SERVER_KEY = os.getenv('FIREBASE_SERVER_KEY', "")
 
 
 def initialize_firebase_once():
@@ -46,7 +45,7 @@ def initialize_firebase_once():
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.31.146', '[::1]', '*']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -70,6 +69,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
+    'users.middleware.SecurityMiddleware',  # Added security middleware
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -77,7 +78,6 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
 ]
 
 ROOT_URLCONF = 'backend.urls'
@@ -99,6 +99,8 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
+
+# Database Configuration
 if os.environ.get('DATABASE_URL'):
     DATABASES = {
         'default': dj_database_url.parse(os.environ.get('DATABASE_URL'))
@@ -115,9 +117,23 @@ else:
         }
     }
 
+# Password Hashers (Stronger Security)
+PASSWORD_HASHERS = [
+    'django.contrib.auth.hashers.Argon2PasswordHasher',  # Most secure
+    'django.contrib.auth.hashers.PBKDF2PasswordHasher',  # Default Django hasher
+    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',  # Legacy support
+    'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',  # Alternative strong option
+]
 
+# Authentication
 AUTH_USER_MODEL = 'users.CustomUser'
 
+AUTHENTICATION_BACKENDS = [
+    'users.backends.SecureAuthBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+
+# JWT Configuration
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
@@ -128,19 +144,75 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+# Enhanced Password Validation
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        'OPTIONS': {
+            'user_attributes': ('username', 'email', 'first_name', 'last_name', 'cin'),
+            'max_similarity': 0.7,
+        }
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {
+            'min_length': 12,  # Increased from 8 for better security
+        }
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+    {
+        'NAME': 'users.validators.CustomPasswordValidator',
+    },
+]
+
+# Security Settings
+SESSION_COOKIE_SECURE = not DEBUG  # Use HTTPS in production
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Strict'
+SESSION_COOKIE_AGE = 3600  # 1 hour
+
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SAMESITE = 'Strict'
+
+# Account lockout settings
+ACCOUNT_LOCKOUT_ENABLED = True
+ACCOUNT_LOCKOUT_ATTEMPTS = 5
+ACCOUNT_LOCKOUT_DURATION = 300  # 5 minutes in seconds
+
+# Rate limiting
+RATELIMIT_ENABLE = True
+RATELIMIT_USE_CACHE = 'default'
+RATE_LIMIT_REQUESTS = 10  # Max requests per window
+RATE_LIMIT_WINDOW = 60    # Window in seconds
+
+# Sensitive endpoints for rate limiting
+RATE_LIMIT_SENSITIVE_ENDPOINTS = [
+    '/api/auth/login/',
+    '/api/auth/password/reset/',
+    '/api/users/create/',
+    '/api/users/clients/create/',
+]
+
+# Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
 
-AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
-]
+# Password Reset Configuration
+REST_PASSWORDRESET = {
+    'TOKEN_EXPIRY_TIME_HOURS': 0,
+    'TOKEN_EXPIRY_TIME_MINUTES': 15,
+}
 
+# Email Configuration
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
@@ -148,6 +220,7 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 
+# Media and Static Files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 STATIC_URL = 'templates/'
@@ -155,35 +228,36 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'templatefiles')
 STATICFILES_DIRS = [os.path.join(BASE_DIR, 'templates')]
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Internationalization
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
+# Stripe Configuration
 STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY')
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
 
+# Twilio Configuration
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
 TWILIO_ENABLED = os.getenv('TWILIO_ENABLED', 'False') == 'True'
 
+# Tesseract OCR Configuration
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
 CONFIDENCE_THRESHOLD = 0.7
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = ('png', 'jpg', 'jpeg')
 
+# ML Model Configuration
 ML_MODEL_DIR = os.path.join(BASE_DIR, 'ml_model')
 ML_MODEL_PATH = os.path.join(BASE_DIR, 'ml_model', 'invoice_classifier.h5')
 CLASSES = {'electricity': 0, 'water': 1, 'purchase': 2}
 
-REST_PASSWORDRESET = {
-    'TOKEN_EXPIRY_TIME_HOURS': 0,
-    'TOKEN_EXPIRY_TIME_MINUTES': 15,
-}
-
+# CORS Configuration
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
@@ -208,6 +282,7 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
+# Cloudinary Configuration
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME'),
     'API_KEY': os.getenv('CLOUDINARY_API_KEY'),
@@ -216,6 +291,7 @@ CLOUDINARY_STORAGE = {
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
+# Logging Configuration
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -229,6 +305,11 @@ LOGGING = {
             'level': 'INFO',
             'class': 'logging.StreamHandler',
         },
+        'security_file': {
+            'level': 'WARNING',
+            'class': 'logging.FileHandler',
+            'filename': 'security.log',
+        },
     },
     'loggers': {
         'webhooks': {
@@ -241,12 +322,36 @@ LOGGING = {
             'level': 'INFO',
             'propagate': True,
         },
+        'users.backends': {
+            'handlers': ['security_file', 'console'],
+            'level': 'WARNING',
+            'propagate': True,
+        },
+        'users.middleware': {
+            'handlers': ['security_file', 'console'],
+            'level': 'WARNING',
+            'propagate': True,
+        },
     },
 }
 
-POPPLER_PATH = None
-ALLOWED_HOSTS = ['*']
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.31.146', '[::1]', '*']
+# Cache Configuration (Required for rate limiting and account lockout)
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+    }
+}
 
+# Production Security Headers (will be applied when DEBUG=False)
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
 
+# Initialize Firebase
 initialize_firebase_once()

@@ -8,11 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 def initialize_firebase():
-    """Initialize Firebase Admin SDK - Fixed Version"""
 
-    # Check if Firebase is already initialized
     if firebase_admin._apps:
-        logger.info("Firebase already initialized")
         return firebase_admin.get_app()
 
     try:

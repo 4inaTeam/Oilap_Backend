@@ -124,17 +124,11 @@ class BillStatisticsView(APIView):
         bills = self.get_accessible_bills(request.user)
         factures = self.get_accessible_factures(request.user)
 
-        # Debug logging
-        print(
-            f"User: {request.user.username}, Role: {getattr(request.user, 'role', 'No role')}")
-        print(f"Bills count: {bills.count()}")
-        print(f"Factures count: {factures.count()}")
-
         # Calculate totals separately
         bills_total = bills.aggregate(total=Sum('amount'))[
-            'total'] or 0  # EXPENSES
+            'total'] or 0  
         factures_total = factures.aggregate(total=Sum('final_total'))[
-            'total'] or 0  # REVENUE
+            'total'] or 0 
 
         # Calculate combined total for percentage calculations
         combined_total = bills_total + factures_total
@@ -447,7 +441,6 @@ class BillCreateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# Keep the rest of the views unchanged
 class BillListView(APIView):
     permission_classes = [IsAuthenticated | IsAdminOrAccountant]
 
