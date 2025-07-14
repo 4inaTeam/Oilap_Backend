@@ -126,9 +126,9 @@ class BillStatisticsView(APIView):
 
         # Calculate totals separately
         bills_total = bills.aggregate(total=Sum('amount'))[
-            'total'] or 0  
+            'total'] or 0
         factures_total = factures.aggregate(total=Sum('final_total'))[
-            'total'] or 0 
+            'total'] or 0
 
         # Calculate combined total for percentage calculations
         combined_total = bills_total + factures_total
@@ -279,19 +279,14 @@ class BillCreateView(APIView):
         if total_forms:
             try:
                 total_forms = int(total_forms)
-                print(f"Processing {total_forms} items from formset")
 
                 for i in range(total_forms):
                     title = request_data.get(f'items-{i}-title', '').strip()
                     quantity = request_data.get(f'items-{i}-quantity', '0')
                     unit_price = request_data.get(f'items-{i}-unit_price', '0')
 
-                    print(
-                        f"Item {i}: title='{title}', quantity='{quantity}', unit_price='{unit_price}'")
-
                     # Skip empty items
                     if not title:
-                        print(f"Skipping item {i} - no title")
                         continue
 
                     try:
@@ -304,7 +299,6 @@ class BillCreateView(APIView):
                             'unit_price': unit_price
                         }
                         items.append(item)
-                        print(f"Added item {i}: {item}")
 
                     except (ValueError, TypeError) as e:
                         print(f"Error parsing item {i}: {e}")
@@ -363,12 +357,7 @@ class BillCreateView(APIView):
         return items
 
     def post(self, request):
-        # Debug: Print received data and files
-        print("Received data keys:", list(request.data.keys()))
-        print("Received files:", list(request.FILES.keys()))
-        print("Category:", request.data.get('category'))
 
-        # Check if image file is provided
         if 'original_image' not in request.FILES:
             return Response(
                 {"original_image": ["This field is required."]},
@@ -451,7 +440,6 @@ class BillListView(APIView):
         - Accountants: all bills from admin and accountant users (shared within enterprise)
         - Admins: all bills from admin and accountant users (shared within enterprise)
         """
-
         if hasattr(user, 'role'):
             user_role = user.role.lower()
 
@@ -469,9 +457,18 @@ class BillListView(APIView):
     def get(self, request):
         """
         Get all accessible bills for the authenticated user.
-        Supports filtering by category and ordering.
+        Supports search, filtering by category, pagination, and ordering.
         """
         bills = self.get_accessible_bills(request.user)
+
+        search_query = request.query_params.get('search', '').strip()
+        if search_query:
+
+            bills = bills.filter(
+                Q(owner__icontains=search_query) |
+                Q(category__icontains=search_query) |
+                Q(amount__icontains=search_query)
+            )
 
         category = request.query_params.get('category')
         if category:
@@ -480,10 +477,31 @@ class BillListView(APIView):
         ordering = request.query_params.get('ordering', '-created_at')
         bills = bills.order_by(ordering)
 
-        serializer = BillSerializer(bills, many=True)
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 10))
+
+        total_count = bills.count()
+
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+
+
+        paginated_bills = bills[start_index:end_index]
+
+
+        total_pages = (total_count + page_size -
+                       1) // page_size  
+
+        serializer = BillSerializer(paginated_bills, many=True)
+
         return Response({
-            'count': bills.count(),
-            'results': serializer.data
+            'count': total_count,
+            'results': serializer.data,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': total_pages,
+            'next': page < total_pages,
+            'previous': page > 1
         }, status=status.HTTP_200_OK)
 
 

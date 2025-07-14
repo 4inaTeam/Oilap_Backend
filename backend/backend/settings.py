@@ -117,15 +117,14 @@ else:
         }
     }
 
-# Password Hashers (Stronger Security)
 PASSWORD_HASHERS = [
-    'django.contrib.auth.hashers.Argon2PasswordHasher',  # Most secure
-    'django.contrib.auth.hashers.PBKDF2PasswordHasher',  # Default Django hasher
-    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',  # Legacy support
-    'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',  # Alternative strong option
+    'django.contrib.auth.hashers.Argon2PasswordHasher',
+    'django.contrib.auth.hashers.PBKDF2PasswordHasher',
+    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
+    'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
 ]
 
-# Authentication
+
 AUTH_USER_MODEL = 'users.CustomUser'
 
 AUTHENTICATION_BACKENDS = [
@@ -133,7 +132,6 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
-# JWT Configuration
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
@@ -156,7 +154,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
         'OPTIONS': {
-            'min_length': 12,  # Increased from 8 for better security
+            'min_length': 12,
         }
     },
     {
@@ -171,10 +169,10 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Security Settings
-SESSION_COOKIE_SECURE = not DEBUG  # Use HTTPS in production
+SESSION_COOKIE_SECURE = not DEBUG  
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Strict'
-SESSION_COOKIE_AGE = 3600  # 1 hour
+SESSION_COOKIE_AGE = 3600 
 
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = True
@@ -183,13 +181,12 @@ CSRF_COOKIE_SAMESITE = 'Strict'
 # Account lockout settings
 ACCOUNT_LOCKOUT_ENABLED = True
 ACCOUNT_LOCKOUT_ATTEMPTS = 5
-ACCOUNT_LOCKOUT_DURATION = 300  # 5 minutes in seconds
-
+ACCOUNT_LOCKOUT_DURATION = 300 
 # Rate limiting
 RATELIMIT_ENABLE = True
 RATELIMIT_USE_CACHE = 'default'
-RATE_LIMIT_REQUESTS = 10  # Max requests per window
-RATE_LIMIT_WINDOW = 60    # Window in seconds
+RATE_LIMIT_REQUESTS = 10  
+RATE_LIMIT_WINDOW = 60  
 
 # Sensitive endpoints for rate limiting
 RATE_LIMIT_SENSITIVE_ENDPOINTS = [
@@ -291,7 +288,6 @@ CLOUDINARY_STORAGE = {
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
-# Logging Configuration
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -347,7 +343,7 @@ CACHES = {
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_SECONDS = 31536000  
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_CONTENT_TYPE_NOSNIFF = True

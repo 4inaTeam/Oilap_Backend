@@ -11,36 +11,29 @@ class CustomPasswordValidator:
     def validate(self, password, user=None):
         errors = []
 
-        # Check for uppercase letter
         if not re.search(r'[A-Z]', password):
             errors.append(
                 _('Password must contain at least one uppercase letter.'))
 
-        # Check for lowercase letter
         if not re.search(r'[a-z]', password):
             errors.append(
                 _('Password must contain at least one lowercase letter.'))
 
-        # Check for digit
         if not re.search(r'\d', password):
             errors.append(_('Password must contain at least one digit.'))
 
-        # Check for special character
         if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
             errors.append(
                 _('Password must contain at least one special character.'))
 
-        # Check for sequential characters
         if self._has_sequential_chars(password):
             errors.append(
                 _('Password must not contain sequential characters (e.g., 123, abc).'))
 
-        # Check for repeated characters
         if self._has_repeated_chars(password):
             errors.append(
                 _('Password must not contain more than 2 repeated characters.'))
 
-        # Check against user information if available
         if user and self._contains_user_info(password, user):
             errors.append(_('Password must not contain personal information.'))
 

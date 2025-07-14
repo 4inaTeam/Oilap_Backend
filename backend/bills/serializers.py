@@ -36,10 +36,6 @@ class BillSerializer(serializers.ModelSerializer):
         consumption = data.get('consumption')
         items = data.get('items')
 
-        print(f"Validating bill - Category: {category}")
-        print(f"Items in validation: {items}")
-        print(f"Items type: {type(items)}")
-
         if category in ['water', 'electricity']:
             if consumption is None:
                 raise serializers.ValidationError(
