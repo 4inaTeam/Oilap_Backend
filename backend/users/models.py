@@ -109,6 +109,35 @@ class CustomUser(AbstractUser):
         ('CLIENT', 'Client'),
     ]
 
+    # Popular Tunisian cities choices
+    VILLE_CHOICES = [
+        ('Tunis', 'Tunis'),
+        ('Sfax', 'Sfax'),
+        ('Sousse', 'Sousse'),
+        ('Kairouan', 'Kairouan'),
+        ('Bizerte', 'Bizerte'),
+        ('Gabès', 'Gabès'),
+        ('Ariana', 'Ariana'),
+        ('Gafsa', 'Gafsa'),
+        ('Monastir', 'Monastir'),
+        ('Ben Arous', 'Ben Arous'),
+        ('Kasserine', 'Kasserine'),
+        ('Médenine', 'Médenine'),
+        ('Nabeul', 'Nabeul'),
+        ('Tataouine', 'Tataouine'),
+        ('Béja', 'Béja'),
+        ('Jendouba', 'Jendouba'),
+        ('Mahdia', 'Mahdia'),
+        ('Manouba', 'Manouba'),
+        ('Sidi Bouzid', 'Sidi Bouzid'),
+        ('Siliana', 'Siliana'),
+        ('Tozeur', 'Tozeur'),
+        ('Zaghouan', 'Zaghouan'),
+        ('Kef', 'Kef'),
+        ('Kébili', 'Kébili'),
+        ('Other', 'Other'),
+    ]
+
     email = models.EmailField(unique=True)
     role = models.CharField(
         max_length=20, choices=ROLE_CHOICES, default='CLIENT')
@@ -131,6 +160,15 @@ class CustomUser(AbstractUser):
         null=True,
         help_text=_(
             "Phone number in international format (+countrycode + number) or 8 digits for legacy format")
+    )
+
+    # New ville field with default value
+    ville = models.CharField(
+        max_length=50,
+        choices=VILLE_CHOICES,
+        default='Tunis',
+        verbose_name=_("City"),
+        help_text=_("User's city of residence")
     )
 
     isActive = models.BooleanField(default=True)
@@ -353,6 +391,7 @@ class CustomUser(AbstractUser):
             'username': self.username,
             'email': self.email,
             'tel': self.tel,
+            'ville': self.ville,
             'formatted_phone': self.get_formatted_phone(),
             'country_code': self.get_country_code(),
             'phone_without_country': self.get_phone_without_country_code(),

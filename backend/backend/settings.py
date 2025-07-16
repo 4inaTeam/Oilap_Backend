@@ -66,11 +66,12 @@ INSTALLED_APPS = [
     'tickets',
     'bills',
     'corsheaders',
+    'django_filters'
 ]
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
-    'users.middleware.SecurityMiddleware',  # Added security middleware
+    'users.middleware.SecurityMiddleware', 
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',

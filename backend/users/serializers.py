@@ -47,17 +47,19 @@ class CustomUserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'role',
             'password', 'profile_photo', 'isActive',
-            'cin', 'tel'
+            'cin', 'tel', 'ville'
         ]
         extra_kwargs = {
             'password': {'write_only': True},
             'role': {'read_only': True},
             'cin': {'required': True},
             'tel': {'required': True},
+            'ville': {'required': False},  # Optional, will use default
         }
 
     def create(self, validated_data):
         validated_data.setdefault('role', 'CLIENT')
+        # If ville is not provided, it will use the model's default value
         user = CustomUser.objects.create_user(**validated_data)
         return user
 
@@ -65,21 +67,25 @@ class CustomUserSerializer(serializers.ModelSerializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ['username', 'email', 'profile_photo', 'tel', 'cin']
+        fields = ['username', 'email', 'profile_photo', 'tel', 'cin', 'ville']
         extra_kwargs = {
             'username': {'required': False},
             'email': {'required': False},
             'profile_photo': {'required': False},
             'tel': {'required': False},
             'cin': {'required': False},
+            'ville': {'required': False},
         }
+
 
 class AdminUserCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'role', 'password', 'cin', 'tel']
+        fields = ['id', 'username', 'email', 'role',
+                  'password', 'cin', 'tel', 'ville']
         extra_kwargs = {
             'password': {'write_only': True},
+            'ville': {'required': False},
         }
 
     def validate_role(self, value):
@@ -90,7 +96,20 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
             )
         return value
 
+    def validate_ville(self, value):
+        """Validate ville field against available choices"""
+        if value:
+            valid_cities = [choice[0] for choice in CustomUser.VILLE_CHOICES]
+            if value not in valid_cities:
+                raise serializers.ValidationError(
+                    f"Invalid city. Allowed cities: {', '.join(valid_cities)}"
+                )
+        return value
+
     def create(self, validated_data):
+        # Ensure ville has a default value if not provided
+        if 'ville' not in validated_data or not validated_data['ville']:
+            validated_data['ville'] = 'Tunis'
         return CustomUser.objects.create_user(**validated_data)
 
 
@@ -106,7 +125,7 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ['username', 'email', 'password', 'first_name', 'last_name',
-                  'profile_photo', 'cin', 'tel', 'isActive']
+                  'profile_photo', 'cin', 'tel', 'isActive', 'ville']
         extra_kwargs = {
             'username': {'required': False},
             'email': {'required': False},
@@ -114,6 +133,7 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
             'tel': {'required': False},
             'profile_photo': {'required': False},
             'isActive': {'required': False},
+            'ville': {'required': False},
         }
 
     def validate_email(self, value):
@@ -134,6 +154,16 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("CIN already exists")
         return value
 
+    def validate_ville(self, value):
+        """Validate ville field against available choices"""
+        if value:
+            valid_cities = [choice[0] for choice in CustomUser.VILLE_CHOICES]
+            if value not in valid_cities:
+                raise serializers.ValidationError(
+                    f"Invalid city. Allowed cities: {', '.join(valid_cities)}"
+                )
+        return value
+
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
         for attr, value in validated_data.items():
@@ -150,12 +180,13 @@ class EmployeeAccountantUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ['username', 'email', 'password',
-                  'tel', 'profile_photo', 'role']
+                  'tel', 'profile_photo', 'role', 'ville']
         extra_kwargs = {
             'username': {'required': False},
             'email': {'required': False},
             'tel': {'required': False},
             'profile_photo': {'required': False},
+            'ville': {'required': False},
         }
 
     def validate_role(self, value):
@@ -177,6 +208,16 @@ class EmployeeAccountantUpdateSerializer(serializers.ModelSerializer):
             if queryset.exists():
                 raise serializers.ValidationError(
                     "A user with this email already exists.")
+        return value
+
+    def validate_ville(self, value):
+        """Validate ville field against available choices"""
+        if value:
+            valid_cities = [choice[0] for choice in CustomUser.VILLE_CHOICES]
+            if value not in valid_cities:
+                raise serializers.ValidationError(
+                    f"Invalid city. Allowed cities: {', '.join(valid_cities)}"
+                )
         return value
 
     def update(self, instance, validated_data):

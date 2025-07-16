@@ -1,7 +1,10 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
+from django_filters.rest_framework import DjangoFilterBackend
+from django_filters import rest_framework as django_filters
 from django.http import HttpResponse, HttpResponseRedirect
 from django.contrib.auth import get_user_model
 from django.db.models import Sum, Q, Count
@@ -22,9 +25,164 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 User = get_user_model()
 
 
+class FacturePagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+    def get_paginated_response(self, data):
+        return Response({
+            'count': self.page.paginator.count,
+            'next': self.get_next_link(),
+            'previous': self.get_previous_link(),
+            'total_pages': self.page.paginator.num_pages,
+            'current_page': self.page.number,
+            'page_size': self.page_size,
+            'results': data
+        })
+
+
+class FactureFilter(django_filters.FilterSet):
+    # Status filtering - update these choices according to your model
+    statut = django_filters.ChoiceFilter(
+        field_name='payment_status',
+        choices=[
+            ('paid', 'Paid'),
+            ('unpaid', 'Unpaid'),
+            ('pending', 'Pending'),
+            ('overdue', 'Overdue'),
+            ('cancelled', 'Cancelled'),
+        ]
+    )
+
+    # Alternative if you have a different status field
+    payment_status = django_filters.ChoiceFilter(
+        choices=[
+            ('paid', 'Paid'),
+            ('unpaid', 'Unpaid'),
+            ('pending', 'Pending'),
+            ('overdue', 'Overdue'),
+            ('cancelled', 'Cancelled'),
+        ]
+    )
+
+    # Amount filtering
+    montant_min = django_filters.NumberFilter(
+        field_name='final_total', lookup_expr='gte')
+    montant_max = django_filters.NumberFilter(
+        field_name='final_total', lookup_expr='lte')
+    montant_exact = django_filters.NumberFilter(
+        field_name='final_total', lookup_expr='exact')
+
+    # Alternative amount fields
+    total_amount_min = django_filters.NumberFilter(
+        field_name='total_amount', lookup_expr='gte')
+    total_amount_max = django_filters.NumberFilter(
+        field_name='total_amount', lookup_expr='lte')
+
+    # Date filtering
+    date_creation_after = django_filters.DateFilter(
+        field_name='created_at', lookup_expr='gte')
+    date_creation_before = django_filters.DateFilter(
+        field_name='created_at', lookup_expr='lte')
+    date_echeance_after = django_filters.DateFilter(
+        field_name='due_date', lookup_expr='gte')
+    date_echeance_before = django_filters.DateFilter(
+        field_name='due_date', lookup_expr='lte')
+
+    # Client filtering (for admin/employee/accountant)
+    client_id = django_filters.NumberFilter(field_name='client__id')
+    client_cin = django_filters.CharFilter(
+        field_name='client__cin', lookup_expr='icontains')
+    client_username = django_filters.CharFilter(
+        field_name='client__username', lookup_expr='icontains')
+    client_email = django_filters.CharFilter(
+        field_name='client__email', lookup_expr='icontains')
+
+    # Facture number filtering
+    facture_number = django_filters.CharFilter(
+        field_name='facture_number', lookup_expr='icontains')
+
+    class Meta:
+        model = Facture
+        fields = [
+            'statut',
+            'payment_status',
+            'montant_min',
+            'montant_max',
+            'montant_exact',
+            'total_amount_min',
+            'total_amount_max',
+            'date_creation_after',
+            'date_creation_before',
+            'date_echeance_after',
+            'date_echeance_before',
+            'client_id',
+            'client_cin',
+            'client_username',
+            'client_email',
+            'facture_number'
+        ]
+
+
+class FactureSearchFilter(filters.SearchFilter):
+    """Custom search filter for Facture model"""
+
+    def filter_queryset(self, request, queryset, view):
+        search_param = self.get_search_terms(request)
+        if not search_param:
+            return queryset
+
+        search_query = ' '.join(search_param)
+
+        # Build search query for different fields
+        search_conditions = Q()
+
+        # Search by ID
+        if search_query.isdigit():
+            search_conditions |= Q(id=int(search_query))
+
+        # Search by facture number
+        search_conditions |= Q(facture_number__icontains=search_query)
+
+        # Search by client information
+        search_conditions |= Q(client__username__icontains=search_query)
+        search_conditions |= Q(client__email__icontains=search_query)
+        search_conditions |= Q(client__cin__icontains=search_query)
+        search_conditions |= Q(client__first_name__icontains=search_query)
+        search_conditions |= Q(client__last_name__icontains=search_query)
+
+        # Search by amount (if numeric)
+        try:
+            amount = float(search_query)
+            search_conditions |= Q(final_total=amount)
+            search_conditions |= Q(total_amount=amount)
+        except ValueError:
+            pass
+
+        # Search by status
+        search_conditions |= Q(payment_status__icontains=search_query)
+
+        # Search by description or notes (if you have these fields)
+        if hasattr(queryset.model, 'description'):
+            search_conditions |= Q(description__icontains=search_query)
+        if hasattr(queryset.model, 'notes'):
+            search_conditions |= Q(notes__icontains=search_query)
+
+        return queryset.filter(search_conditions).distinct()
+
+
 class FactureViewSet(viewsets.ModelViewSet):
     serializer_class = FactureSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = FacturePagination
+    filter_backends = [DjangoFilterBackend,
+                       FactureSearchFilter, filters.OrderingFilter]
+    filterset_class = FactureFilter
+    search_fields = []  # We use custom search filter
+    ordering_fields = ['id', 'created_at', 'due_date', 'final_total',
+                       'total_amount', 'payment_status', 'facture_number']
+    ordering = ['-created_at']  # Default ordering
 
     def get_queryset(self):
         user = self.request.user
@@ -32,7 +190,7 @@ class FactureViewSet(viewsets.ModelViewSet):
         if user.role in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
             queryset = Facture.objects.all()
 
-            # Allow filtering by client_id via query parameter
+            # Allow filtering by client_id via query parameter (backward compatibility)
             client_id = self.request.query_params.get('client_id', None)
             if client_id:
                 try:
@@ -47,6 +205,11 @@ class FactureViewSet(viewsets.ModelViewSet):
         else:
             # Regular clients can only see their own factures
             return Facture.objects.filter(client=user)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
 
     def create(self, request, *args, **kwargs):
         """Override create to automatically generate PDF after facture creation"""
@@ -83,8 +246,89 @@ class FactureViewSet(viewsets.ModelViewSet):
         return response
 
     @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """Get facture statistics with filtering support"""
+        try:
+            user = request.user
+
+            # Check permissions
+            if user.role not in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
+                return Response(
+                    {'error': 'You do not have permission to view statistics.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            queryset = self.filter_queryset(self.get_queryset())
+
+            # Basic statistics
+            total_factures = queryset.count()
+            total_revenue = queryset.aggregate(
+                total=Sum('final_total'))['total'] or 0
+            total_amount_before_tax = queryset.aggregate(
+                total=Sum('total_amount'))['total'] or 0
+
+            # Status-based statistics
+            status_stats = {}
+            for status_choice in ['paid', 'unpaid', 'pending', 'overdue', 'cancelled']:
+                status_queryset = queryset.filter(payment_status=status_choice)
+                status_stats[status_choice] = {
+                    'count': status_queryset.count(),
+                    'total_amount': status_queryset.aggregate(total=Sum('final_total'))['total'] or 0
+                }
+
+            # Recent factures
+            recent_factures = queryset.order_by('-created_at')[:10]
+
+            stats = {
+                'total_factures': total_factures,
+                'total_revenue': float(total_revenue),
+                'total_amount_before_tax': float(total_amount_before_tax),
+                'by_status': status_stats,
+                'recent_factures_count': recent_factures.count(),
+                'filters_applied': dict(request.query_params)
+            }
+
+            return Response(stats)
+
+        except Exception as e:
+            logger.error(f"Error calculating statistics: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return Response(
+                {'error': 'An error occurred while calculating statistics.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def by_status(self, request):
+        """Get factures grouped by status with current filters applied"""
+        try:
+            user = request.user
+
+            if user.role not in ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT']:
+                return Response(
+                    {'error': 'You do not have permission to view status breakdown.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            queryset = self.filter_queryset(self.get_queryset())
+            status_counts = {}
+
+            for status_choice in ['paid', 'unpaid', 'pending', 'overdue', 'cancelled']:
+                count = queryset.filter(payment_status=status_choice).count()
+                status_counts[status_choice] = count
+
+            return Response(status_counts)
+
+        except Exception as e:
+            logger.error(f"Error getting status breakdown: {str(e)}")
+            return Response(
+                {'error': 'An error occurred while getting status breakdown.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
     def total_revenue(self, request):
-        """Calculate total revenue from paid factures"""
+        """Calculate total revenue from paid factures with enhanced filtering"""
         try:
             user = request.user
 
@@ -95,15 +339,18 @@ class FactureViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-            # Get query parameters for filtering
+            # Apply all filters from the filterset
+            queryset = self.filter_queryset(self.get_queryset())
+
+            # Additional legacy filter support
             client_id = request.query_params.get('client_id', None)
             date_from = request.query_params.get('date_from', None)
             date_to = request.query_params.get('date_to', None)
 
             # Base queryset - only paid factures
-            queryset = Facture.objects.filter(payment_status='paid')
+            queryset = queryset.filter(payment_status='paid')
 
-            # Apply client filter if provided
+            # Apply legacy client filter if provided
             if client_id:
                 try:
                     client = User.objects.get(id=client_id, role='CLIENT')
@@ -114,7 +361,7 @@ class FactureViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # Apply date filters if provided
+            # Apply legacy date filters if provided
             if date_from:
                 queryset = queryset.filter(created_at__date__gte=date_from)
             if date_to:
@@ -124,7 +371,8 @@ class FactureViewSet(viewsets.ModelViewSet):
             revenue_data = queryset.aggregate(
                 total_revenue=Sum('final_total'),
                 total_amount_before_tax=Sum('total_amount'),
-                total_tva=Sum('tva_amount'),
+                total_tva=Sum('tva_amount') if hasattr(Facture, 'tva_amount') else Sum(
+                    'final_total') - Sum('total_amount'),
                 facture_count=Count('id')
             )
 
@@ -141,11 +389,7 @@ class FactureViewSet(viewsets.ModelViewSet):
                 'total_amount_before_tax': float(total_amount_before_tax),
                 'total_tva': float(total_tva),
                 'paid_factures_count': facture_count,
-                'filters_applied': {
-                    'client_id': client_id,
-                    'date_from': date_from,
-                    'date_to': date_to
-                }
+                'filters_applied': dict(request.query_params)
             }
 
             # Add client info if filtered by client
@@ -156,6 +400,7 @@ class FactureViewSet(viewsets.ModelViewSet):
                         'id': client.id,
                         'username': client.username,
                         'email': getattr(client, 'email', ''),
+                        'cin': getattr(client, 'cin', ''),
                         'first_name': getattr(client, 'first_name', ''),
                         'last_name': getattr(client, 'last_name', '')
                     }

@@ -75,7 +75,8 @@ class UserListView(APIView):
                 "role": user.role,
                 "tel": user.tel,
                 "profile_photo": user.profile_photo.url if user.profile_photo else None,
-                "isActive": user.isActive
+                "isActive": user.isActive,
+                "ville": user.ville  # Added ville field
             } for user in users
         ]
         return Response(data)
