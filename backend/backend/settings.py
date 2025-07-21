@@ -99,16 +99,107 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
-# Database Configuration
+# Replace your database configuration section with this:
+
+import os
+import dj_database_url
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env file for local development only
+load_dotenv()
+
+# Detect Render environment
+IS_RENDER = any([
+    os.environ.get('RENDER'),
+    os.environ.get('RENDER_SERVICE_NAME'),
+    os.environ.get('RENDER_EXTERNAL_URL'),
+    'onrender.com' in os.environ.get('RENDER_EXTERNAL_URL', ''),
+    # Additional detection methods
+    os.path.exists('/opt/render'),
+    'render' in os.environ.get('PATH', '').lower(),
+])
+
+print("=" * 60)
+print("DJANGO RENDER CONFIGURATION")
+print("=" * 60)
+print(f"Environment: {'🚀 RENDER' if IS_RENDER else '🏠 LOCAL'}")
+print(f"Working Directory: {os.getcwd()}")
+print(f".env file exists: {os.path.exists('.env')}")
+
+# Check all environment variables for debugging
+database_related_vars = {}
+for key, value in os.environ.items():
+    if any(word in key.upper() for word in ['DATABASE', 'DB_', 'POSTGRES', 'RENDER']):
+        if 'PASSWORD' in key.upper() or 'SECRET' in key.upper():
+            database_related_vars[key] = '*' * len(value) if value else 'None'
+        else:
+            database_related_vars[key] = value
+
+print("Database/Render related environment variables:")
+for key, value in database_related_vars.items():
+    print(f"  {key}: {value}")
+
 DATABASE_URL = os.environ.get('DATABASE_URL')
+print(f"DATABASE_URL exists: {bool(DATABASE_URL)}")
 
 if DATABASE_URL:
-    # Production/Render environment - use DATABASE_URL
+    print(f"DATABASE_URL preview: {DATABASE_URL[:30]}...{DATABASE_URL[-20:]}")
+    
+# Database Configuration
+if DATABASE_URL:
+    print("✅ Using DATABASE_URL configuration")
+    try:
+        DATABASES = {
+            'default': dj_database_url.parse(
+                DATABASE_URL,
+                conn_max_age=600,
+                conn_health_checks=True
+            )
+        }
+        
+        # Add SSL for production
+        if IS_RENDER:
+            DATABASES['default']['OPTIONS'] = {
+                'sslmode': 'require',
+            }
+            
+        parsed = dj_database_url.parse(DATABASE_URL)
+        print(f"   Host: {parsed.get('HOST')}")
+        print(f"   Database: {parsed.get('NAME')}")
+        print(f"   User: {parsed.get('USER')}")
+        
+    except Exception as e:
+        print(f"❌ Error parsing DATABASE_URL: {e}")
+        raise
+        
+elif IS_RENDER:
+    # We're definitely on Render but DATABASE_URL is missing
+    print("🚨 CRITICAL: Detected Render environment but DATABASE_URL not found!")
+    print("This means the environment variable is not set properly in Render.")
+    print("\nIMPORTANT: You need to:")
+    print("1. Go to your Render dashboard")
+    print("2. Click on your web service")
+    print("3. Go to 'Environment' tab")
+    print("4. Add DATABASE_URL environment variable")
+    print("5. Value should be: postgresql://admin:pzLGfEgq3pLR52GYrqNAVPYM96xw4pcR@dpg-d1los3ndiees73fulq10-a.oregon-postgres.render.com/oilap_db")
+    
+    # Use the database URL directly as fallback
+    FALLBACK_DATABASE_URL = "postgresql://admin:pzLGfEgq3pLR52GYrqNAVPYM96xw4pcR@dpg-d1los3ndiees73fulq10-a.oregon-postgres.render.com/oilap_db"
+    print(f"Using fallback DATABASE_URL for now...")
+    
     DATABASES = {
-        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600, conn_health_checks=True)
+        'default': dj_database_url.parse(
+            FALLBACK_DATABASE_URL,
+            conn_max_age=600,
+            conn_health_checks=True
+        )
     }
+    DATABASES['default']['OPTIONS'] = {'sslmode': 'require'}
+    
 else:
-    # Local development - use individual environment variables
+    # Local development
+    print("🏠 Using local development configuration")
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
@@ -123,10 +214,12 @@ else:
         }
     }
 
-# Add database connection pooling for production
-if not DEBUG:
-    DATABASES['default']['CONN_MAX_AGE'] = 600
-    DATABASES['default']['CONN_HEALTH_CHECKS'] = True
+print(f"Final Database Configuration:")
+print(f"   Engine: {DATABASES['default'].get('ENGINE')}")
+print(f"   Host: {DATABASES['default'].get('HOST')}")
+print(f"   Port: {DATABASES['default'].get('PORT')}")
+print(f"   Database: {DATABASES['default'].get('NAME')}")
+print("=" * 60)
     
 PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.Argon2PasswordHasher',

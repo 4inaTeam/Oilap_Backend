@@ -1,18 +1,15 @@
-# create_superuser.py - Place this in your project root
 from django.contrib.auth import get_user_model
 import os
 import django
 from django.db import IntegrityError
 
-# Setup Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
 django.setup()
 
 
 def create_superuser():
-    User = get_user_model()  # This will get your CustomUser model
+    User = get_user_model()  
 
-    # Get values from environment variables
     cin = os.environ.get('DJANGO_SUPERUSER_CIN', '12345678')
     username = os.environ.get('DJANGO_SUPERUSER_USERNAME', 'admin')
     email = os.environ.get('DJANGO_SUPERUSER_EMAIL', 'admin@example.com')
@@ -20,7 +17,6 @@ def create_superuser():
     tel = os.environ.get('DJANGO_SUPERUSER_TEL', '+21612345678')
 
     try:
-        # Check if superuser already exists (by CIN since it's the USERNAME_FIELD)
         if not User.objects.filter(cin=cin).exists():
             superuser = User.objects.create_superuser(
                 cin=cin,
