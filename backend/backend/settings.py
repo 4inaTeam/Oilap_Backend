@@ -66,7 +66,6 @@ INSTALLED_APPS = [
     'tickets',
     'bills',
     'corsheaders',
-    'django_filters'
 ]
 
 MIDDLEWARE = [
