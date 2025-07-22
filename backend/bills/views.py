@@ -285,7 +285,6 @@ class BillCreateView(APIView):
                     quantity = request_data.get(f'items-{i}-quantity', '0')
                     unit_price = request_data.get(f'items-{i}-unit_price', '0')
 
-                    # Skip empty items
                     if not title:
                         continue
 
@@ -301,11 +300,9 @@ class BillCreateView(APIView):
                         items.append(item)
 
                     except (ValueError, TypeError) as e:
-                        print(f"Error parsing item {i}: {e}")
                         continue
 
             except (ValueError, TypeError) as e:
-                print(f"Error processing formset: {e}")
                 pass
 
         # Check for alternative formats
@@ -353,7 +350,6 @@ class BillCreateView(APIView):
                         pass
                 i += 1
 
-        print(f"Extracted {len(items)} items total: {items}")
         return items
 
     def post(self, request):
@@ -381,7 +377,6 @@ class BillCreateView(APIView):
         # Add items if found
         if items:
             serializer_data['items'] = items
-            print(f"Extracted {len(items)} items:", items)
         else:
             print("No items found in request data")
 
@@ -390,11 +385,8 @@ class BillCreateView(APIView):
         if category == 'purchase':
             if 'items' not in serializer_data or not serializer_data['items']:
                 serializer_data['items'] = []
-            print(
-                f"Final items data for validation: {serializer_data.get('items')}")
 
-        print(f"Data being sent to serializer: {list(serializer_data.keys())}")
-        print(f"Original image file: {serializer_data['original_image']}")
+
 
         serializer = BillSerializer(
             data=serializer_data,
@@ -426,7 +418,6 @@ class BillCreateView(APIView):
 
             return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)
 
-        print("Serializer errors:", serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
