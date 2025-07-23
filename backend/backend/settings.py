@@ -223,17 +223,14 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
-# Directories to search for static files
 STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'templates'),  # Your existing templates
-    os.path.join(BASE_DIR, 'assets'),     # Your assets folder (NEW)
+    os.path.join(BASE_DIR, 'templates'),
+    os.path.join(BASE_DIR, 'media'),
 ]
 
-# Media files (User uploaded files)
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_URL = '/uploads/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'user_uploads')
 
-# Default auto field
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Internationalization
