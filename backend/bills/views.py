@@ -386,8 +386,6 @@ class BillCreateView(APIView):
             if 'items' not in serializer_data or not serializer_data['items']:
                 serializer_data['items'] = []
 
-
-
         serializer = BillSerializer(
             data=serializer_data,
             context={'request': request}
@@ -476,12 +474,10 @@ class BillListView(APIView):
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
 
-
         paginated_bills = bills[start_index:end_index]
 
-
         total_pages = (total_count + page_size -
-                       1) // page_size  
+                       1) // page_size
 
         serializer = BillSerializer(paginated_bills, many=True)
 
@@ -617,25 +613,47 @@ class BillPDFDownloadView(APIView):
             )
 
         try:
-            # Get the file path
-            file_path = bill.pdf_file.path
+            # Check if using Cloudinary storage
+            if hasattr(bill.pdf_file, 'url') and 'cloudinary' in str(bill.pdf_file.url):
+                # For Cloudinary files, redirect to the URL
+                import requests
+                response_data = requests.get(bill.pdf_file.url)
 
-            # Check if file exists
-            if not os.path.exists(file_path):
-                return Response(
-                    {'error': 'PDF file not found on server'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                if response_data.status_code == 200:
+                    response = HttpResponse(
+                        response_data.content,
+                        content_type='application/pdf'
+                    )
+                    filename = f"bill_{bill_id}.pdf"
+                    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                    return response
+                else:
+                    return Response(
+                        {'error': 'PDF file not accessible from Cloudinary'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
 
-            # Read the file
-            with open(file_path, 'rb') as pdf_file:
-                response = HttpResponse(
-                    pdf_file.read(),
-                    content_type='application/pdf'
-                )
-                response[
-                    'Content-Disposition'] = f'attachment; filename="{os.path.basename(file_path)}"'
-                return response
+            # For local storage (development)
+            else:
+                # Get the file path
+                file_path = bill.pdf_file.path
+
+                # Check if file exists
+                if not os.path.exists(file_path):
+                    return Response(
+                        {'error': 'PDF file not found on server'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                # Read the file
+                with open(file_path, 'rb') as pdf_file:
+                    response = HttpResponse(
+                        pdf_file.read(),
+                        content_type='application/pdf'
+                    )
+                    response[
+                        'Content-Disposition'] = f'attachment; filename="{os.path.basename(file_path)}"'
+                    return response
 
         except Exception as e:
             return Response(

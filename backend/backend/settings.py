@@ -355,3 +355,14 @@ if not DEBUG:
 
 # Initialize Firebase
 initialize_firebase_once()
+
+if not DEBUG or os.getenv('RENDER'):  
+    DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+    STATICFILES_STORAGE = 'cloudinary_storage.storage.StaticHashedCloudinaryStorage'
+
+    MEDIA_URL = f'https://res.cloudinary.com/{os.getenv("CLOUDINARY_CLOUD_NAME")}/'
+else:
+    MEDIA_URL = '/uploads/'
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'user_uploads')
+
+    os.makedirs(MEDIA_ROOT, exist_ok=True)
