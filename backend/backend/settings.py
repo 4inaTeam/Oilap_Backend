@@ -70,7 +70,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
-    'users.middleware.SecurityMiddleware', 
+    'users.middleware.SecurityMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -100,48 +100,26 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'backend.wsgi.application'
 
-
-
-# Get DATABASE_URL from environment
+# Database Configuration
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-if DATABASE_URL:
-
-    try:
-        DATABASES = {
-            'default': dj_database_url.parse(
-                DATABASE_URL,
-                conn_max_age=600,
-                conn_health_checks=True
-            )
-        }
-        
-        # Add SSL requirement for production database
-        DATABASES['default']['OPTIONS'] = {
-            'sslmode': 'require',
-        }
-
-        parsed = dj_database_url.parse(DATABASE_URL)
-
-        
-    except Exception as e:
-        raise
-        
-else:
+try:
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': 'oilap_db',
-            'USER': 'admin',
-            'PASSWORD': 'pzLGfEgq3pLR52GYrqNAVPYM96xw4pcR',
-            'HOST': 'dpg-d1los3ndiees73fulq10-a.oregon-postgres.render.com',
-            'PORT': '5432',
-            'OPTIONS': {
-                'sslmode': 'require',
-                'connect_timeout': 60,
-            }
-        }
+        'default': dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=600,
+            conn_health_checks=True
+        )
     }
+
+    DATABASES['default']['OPTIONS'] = {
+        'sslmode': 'require',
+    }
+
+    parsed = dj_database_url.parse(DATABASE_URL)
+
+except Exception as e:
+    raise
 
 PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.Argon2PasswordHasher',
@@ -149,7 +127,6 @@ PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
     'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
 ]
-
 
 AUTH_USER_MODEL = 'users.CustomUser'
 
@@ -168,7 +145,6 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
-# Enhanced Password Validation
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -195,10 +171,10 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Security Settings
-SESSION_COOKIE_SECURE = not DEBUG  
+SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Strict'
-SESSION_COOKIE_AGE = 3600 
+SESSION_COOKIE_AGE = 3600
 
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = True
@@ -207,12 +183,13 @@ CSRF_COOKIE_SAMESITE = 'Strict'
 # Account lockout settings
 ACCOUNT_LOCKOUT_ENABLED = True
 ACCOUNT_LOCKOUT_ATTEMPTS = 5
-ACCOUNT_LOCKOUT_DURATION = 300 
+ACCOUNT_LOCKOUT_DURATION = 300
+
 # Rate limiting
 RATELIMIT_ENABLE = True
 RATELIMIT_USE_CACHE = 'default'
-RATE_LIMIT_REQUESTS = 10  
-RATE_LIMIT_WINDOW = 60  
+RATE_LIMIT_REQUESTS = 10
+RATE_LIMIT_WINDOW = 60
 
 # Sensitive endpoints for rate limiting
 RATE_LIMIT_SENSITIVE_ENDPOINTS = [
@@ -243,12 +220,20 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 
-# Media and Static Files
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+# Directories to search for static files
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'templates'),  # Your existing templates
+    os.path.join(BASE_DIR, 'assets'),     # Your assets folder (NEW)
+]
+
+# Media files (User uploaded files)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-STATIC_URL = 'templates/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'templatefiles')
-STATICFILES_DIRS = [os.path.join(BASE_DIR, 'templates')]
+
+# Default auto field
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Internationalization
@@ -274,11 +259,6 @@ os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
 CONFIDENCE_THRESHOLD = 0.7
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = ('png', 'jpg', 'jpeg')
-
-# ML Model Configuration
-ML_MODEL_DIR = os.path.join(BASE_DIR, 'ml_model')
-ML_MODEL_PATH = os.path.join(BASE_DIR, 'ml_model', 'invoice_classifier.h5')
-CLASSES = {'electricity': 0, 'water': 1, 'purchase': 2}
 
 # CORS Configuration
 CORS_ALLOW_ALL_ORIGINS = True
@@ -314,6 +294,7 @@ CLOUDINARY_STORAGE = {
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
+# Logging Configuration
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -357,7 +338,7 @@ LOGGING = {
     },
 }
 
-# Cache Configuration (Required for rate limiting and account lockout)
+# Cache Configuration
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
@@ -365,11 +346,11 @@ CACHES = {
     }
 }
 
-# Production Security Headers (will be applied when DEBUG=False)
+# Production Security Headers
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    SECURE_HSTS_SECONDS = 31536000  
+    SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
