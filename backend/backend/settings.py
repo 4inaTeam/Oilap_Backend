@@ -54,6 +54,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'cloudinary_storage',  
+    'cloudinary',          
     'users.apps.UsersConfig',
     'rest_framework',
     'rest_framework_simplejwt',
@@ -139,10 +141,13 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
+    'BLACKLIST_AFTER_ROTATION': False,  # Set to False for better compatibility
     'UPDATE_LAST_LOGIN': True,
     'ALGORITHM': 'HS256',
     'AUTH_HEADER_TYPES': ('Bearer',),
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
 }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -220,16 +225,20 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 
+# Static files configuration
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'templates'),
-    os.path.join(BASE_DIR, 'media'),
 ]
 
+# Media files configuration - ALWAYS create local media directory
 MEDIA_URL = '/uploads/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'user_uploads')
+
+# Ensure media directory exists
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -289,26 +298,46 @@ CLOUDINARY_STORAGE = {
     'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
 }
 
+# File Storage Configuration - Use Cloudinary for new uploads, but support both
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
-# Logging Configuration
+# Enhanced Logging Configuration with Bills debugging
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
         'file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
             'filename': 'webhooks.log',
+            'formatter': 'verbose',
         },
         'console': {
             'level': 'INFO',
             'class': 'logging.StreamHandler',
+            'formatter': 'simple',
         },
         'security_file': {
             'level': 'WARNING',
             'class': 'logging.FileHandler',
             'filename': 'security.log',
+            'formatter': 'verbose',
+        },
+        'bills_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': 'bills_debug.log',
+            'formatter': 'verbose',
         },
     },
     'loggers': {
@@ -331,6 +360,16 @@ LOGGING = {
             'handlers': ['security_file', 'console'],
             'level': 'WARNING',
             'propagate': True,
+        },
+        'bills.views': {
+            'handlers': ['bills_file', 'console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'rest_framework': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
         },
     },
 }
@@ -356,13 +395,12 @@ if not DEBUG:
 # Initialize Firebase
 initialize_firebase_once()
 
-if not DEBUG or os.getenv('RENDER'):  
-    DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-    STATICFILES_STORAGE = 'cloudinary_storage.storage.StaticHashedCloudinaryStorage'
+# Add media to STATICFILES_DIRS so it gets served properly
+if os.path.exists(MEDIA_ROOT):
+    STATICFILES_DIRS.append(MEDIA_ROOT)
 
-    MEDIA_URL = f'https://res.cloudinary.com/{os.getenv("CLOUDINARY_CLOUD_NAME")}/'
-else:
-    MEDIA_URL = '/uploads/'
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'user_uploads')
-
-    os.makedirs(MEDIA_ROOT, exist_ok=True)
+print(f"DEBUG: {DEBUG}")
+print(f"MEDIA_ROOT: {MEDIA_ROOT}")
+print(f"MEDIA_URL: {MEDIA_URL}")
+print(f"DEFAULT_FILE_STORAGE: {DEFAULT_FILE_STORAGE}")
+print(f"Cloudinary configured: {bool(os.getenv('CLOUDINARY_CLOUD_NAME'))}")
