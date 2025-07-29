@@ -18,10 +18,11 @@ from django.core.files.uploadedfile import InMemoryUploadedFile
 import json
 import os
 from factures.models import Facture
+import requests
+import logging
 
 User = get_user_model()
-
-User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class BillStatisticsView(APIView):
@@ -378,7 +379,7 @@ class BillCreateView(APIView):
         if items:
             serializer_data['items'] = items
         else:
-            print("No items found in request data")
+            logger.info("No items found in request data")
 
         # For purchase bills, ensure items is at least an empty list if not found
         category = serializer_data.get('category')
@@ -576,6 +577,9 @@ class BillDetailView(APIView):
 
 
 class BillPDFDownloadView(APIView):
+    """
+    ENHANCED: PDF Download/View endpoint that supports both downloading and viewing
+    """
     permission_classes = [IsAuthenticated | IsAdminOrAccountant]
 
     def get_object(self, bill_id, user):
@@ -602,7 +606,171 @@ class BillPDFDownloadView(APIView):
 
     def get(self, request, bill_id):
         """
-        Download the PDF file of a specific bill
+        Download or view the PDF file of a specific bill
+        Supports both download (attachment) and view (inline) modes
+        """
+        bill = self.get_object(bill_id, request.user)
+
+        if not bill.pdf_file:
+            logger.error(f"PDF file not available for bill {bill_id}")
+            return Response(
+                {'error': 'PDF file not available for this bill'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check query parameter for display mode
+        view_mode = request.query_params.get(
+            'view', 'download')  # 'download' or 'inline'
+
+        try:
+            logger.info(
+                f"Attempting to serve PDF for bill {bill_id}, mode: {view_mode}")
+
+            # Check if using Cloudinary storage
+            if hasattr(bill.pdf_file, 'url') and 'cloudinary' in str(bill.pdf_file.url):
+                logger.info(f"Using Cloudinary PDF URL: {bill.pdf_file.url}")
+
+                # For Cloudinary files, fetch and serve the content
+                try:
+                    response_data = requests.get(bill.pdf_file.url, timeout=30)
+
+                    if response_data.status_code == 200:
+                        # Validate that we got PDF content
+                        content_type = response_data.headers.get(
+                            'content-type', '')
+                        if 'application/pdf' not in content_type and len(response_data.content) > 0:
+                            # Check PDF magic bytes
+                            if not response_data.content.startswith(b'%PDF'):
+                                logger.warning(
+                                    f"Retrieved content doesn't appear to be PDF. Content-Type: {content_type}")
+
+                        response = HttpResponse(
+                            response_data.content,
+                            content_type='application/pdf'
+                        )
+
+                        filename = f"bill_{bill_id}.pdf"
+
+                        if view_mode == 'inline':
+                            # For viewing in browser/app
+                            response['Content-Disposition'] = f'inline; filename="{filename}"'
+                        else:
+                            # For downloading
+                            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+                        # Add headers for better caching and security
+                        response['Cache-Control'] = 'private, max-age=3600'
+                        response['X-Content-Type-Options'] = 'nosniff'
+
+                        logger.info(
+                            f"Successfully served PDF for bill {bill_id}, size: {len(response_data.content)} bytes")
+                        return response
+                    else:
+                        logger.error(
+                            f"Failed to fetch PDF from Cloudinary: {response_data.status_code}")
+                        return Response(
+                            {'error': f'PDF file not accessible from Cloudinary (Status: {response_data.status_code})'},
+                            status=status.HTTP_404_NOT_FOUND
+                        )
+
+                except requests.RequestException as e:
+                    logger.error(
+                        f"Request error fetching PDF from Cloudinary: {str(e)}")
+                    return Response(
+                        {'error': f'Network error accessing PDF: {str(e)}'},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE
+                    )
+
+            # For local storage (development)
+            else:
+                logger.info(f"Using local PDF file: {bill.pdf_file.name}")
+
+                # Get the file path
+                file_path = bill.pdf_file.path
+
+                # Check if file exists
+                if not os.path.exists(file_path):
+                    logger.error(f"PDF file not found on server: {file_path}")
+                    return Response(
+                        {'error': 'PDF file not found on server'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                # Read the file
+                try:
+                    with open(file_path, 'rb') as pdf_file:
+                        file_content = pdf_file.read()
+
+                    # Validate PDF content
+                    if not file_content.startswith(b'%PDF'):
+                        logger.warning(
+                            f"File doesn't appear to be a valid PDF: {file_path}")
+
+                    response = HttpResponse(
+                        file_content,
+                        content_type='application/pdf'
+                    )
+
+                    filename = os.path.basename(file_path)
+
+                    if view_mode == 'inline':
+                        # For viewing in browser/app
+                        response['Content-Disposition'] = f'inline; filename="{filename}"'
+                    else:
+                        # For downloading
+                        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+                    # Add headers for better caching and security
+                    response['Cache-Control'] = 'private, max-age=3600'
+                    response['X-Content-Type-Options'] = 'nosniff'
+
+                    logger.info(
+                        f"Successfully served local PDF for bill {bill_id}, size: {len(file_content)} bytes")
+                    return response
+
+                except IOError as e:
+                    logger.error(f"IO error reading PDF file: {str(e)}")
+                    return Response(
+                        {'error': f'Error reading PDF file: {str(e)}'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+
+        except Exception as e:
+            logger.error(
+                f"Unexpected error serving PDF for bill {bill_id}: {str(e)}")
+            return Response(
+                {'error': f'Error accessing PDF file: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class BillPDFViewView(APIView):
+    """
+    NEW: Separate endpoint specifically for viewing PDFs inline (for Flutter app)
+    """
+    permission_classes = [IsAuthenticated | IsAdminOrAccountant]
+
+    def get_object(self, bill_id, user):
+        """
+        Get bill object ensuring user has permission to access it
+        """
+        bill = get_object_or_404(Bill, id=bill_id)
+
+        if bill.user == user:
+            return bill
+
+        if hasattr(user, 'role') and hasattr(bill.user, 'role'):
+            user_role = user.role.lower()
+            bill_owner_role = bill.user.role.lower()
+
+            if user_role in ['admin', 'accountant'] and bill_owner_role in ['admin', 'accountant']:
+                return bill
+
+        raise Http404("Bill not found")
+
+    def get(self, request, bill_id):
+        """
+        View PDF inline - specifically designed for Flutter app PDF viewing
         """
         bill = self.get_object(bill_id, request.user)
 
@@ -615,48 +783,48 @@ class BillPDFDownloadView(APIView):
         try:
             # Check if using Cloudinary storage
             if hasattr(bill.pdf_file, 'url') and 'cloudinary' in str(bill.pdf_file.url):
-                # For Cloudinary files, redirect to the URL
-                import requests
-                response_data = requests.get(bill.pdf_file.url)
+                response_data = requests.get(bill.pdf_file.url, timeout=30)
 
                 if response_data.status_code == 200:
                     response = HttpResponse(
                         response_data.content,
                         content_type='application/pdf'
                     )
-                    filename = f"bill_{bill_id}.pdf"
-                    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                    response['Content-Disposition'] = f'inline; filename="bill_{bill_id}.pdf"'
+                    response['Cache-Control'] = 'private, max-age=3600'
+                    # For Flutter web
+                    response['Access-Control-Allow-Origin'] = '*'
                     return response
                 else:
                     return Response(
-                        {'error': 'PDF file not accessible from Cloudinary'},
+                        {'error': 'PDF file not accessible'},
                         status=status.HTTP_404_NOT_FOUND
                     )
 
-            # For local storage (development)
+            # For local storage
             else:
-                # Get the file path
                 file_path = bill.pdf_file.path
-
-                # Check if file exists
                 if not os.path.exists(file_path):
                     return Response(
-                        {'error': 'PDF file not found on server'},
+                        {'error': 'PDF file not found'},
                         status=status.HTTP_404_NOT_FOUND
                     )
 
-                # Read the file
                 with open(file_path, 'rb') as pdf_file:
                     response = HttpResponse(
                         pdf_file.read(),
                         content_type='application/pdf'
                     )
-                    response[
-                        'Content-Disposition'] = f'attachment; filename="{os.path.basename(file_path)}"'
+                    response['Content-Disposition'] = f'inline; filename="bill_{bill_id}.pdf"'
+                    response['Cache-Control'] = 'private, max-age=3600'
+                    # For Flutter web
+                    response['Access-Control-Allow-Origin'] = '*'
                     return response
 
         except Exception as e:
+            logger.error(
+                f"Error serving PDF view for bill {bill_id}: {str(e)}")
             return Response(
-                {'error': f'Error downloading file: {str(e)}'},
+                {'error': f'Error accessing PDF: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
