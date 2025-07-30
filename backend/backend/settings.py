@@ -54,8 +54,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'cloudinary_storage',  
-    'cloudinary',          
+    'cloudinary_storage',
+    'cloudinary',
     'users.apps.UsersConfig',
     'rest_framework',
     'rest_framework_simplejwt',
@@ -233,12 +233,38 @@ STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'templates'),
 ]
 
-# Media files configuration - ALWAYS create local media directory
 MEDIA_URL = '/uploads/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'user_uploads')
 
-# Ensure media directory exists
 os.makedirs(MEDIA_ROOT, exist_ok=True)
+os.makedirs(MEDIA_ROOT, exist_ok=True)
+
+if os.environ.get('RENDER'):
+    cloudinary_configured = all([
+        os.getenv('CLOUDINARY_CLOUD_NAME'),
+        os.getenv('CLOUDINARY_API_KEY'),
+        os.getenv('CLOUDINARY_API_SECRET')
+    ])
+
+    if cloudinary_configured:
+        DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+    else:
+        DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+else:
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'templates'),
+]
+
+# Update the staticfiles dirs to remove the old media path
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'templates'),
+]
+
+# Add the correct media path for serving in development
+if os.path.exists(MEDIA_ROOT):
+    STATICFILES_DIRS.append(MEDIA_ROOT)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -399,8 +425,4 @@ initialize_firebase_once()
 if os.path.exists(MEDIA_ROOT):
     STATICFILES_DIRS.append(MEDIA_ROOT)
 
-print(f"DEBUG: {DEBUG}")
-print(f"MEDIA_ROOT: {MEDIA_ROOT}")
-print(f"MEDIA_URL: {MEDIA_URL}")
-print(f"DEFAULT_FILE_STORAGE: {DEFAULT_FILE_STORAGE}")
-print(f"Cloudinary configured: {bool(os.getenv('CLOUDINARY_CLOUD_NAME'))}")
+

@@ -20,6 +20,7 @@ import os
 from factures.models import Facture
 import requests
 import logging
+from django.core.files.base import ContentFile
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -354,7 +355,6 @@ class BillCreateView(APIView):
         return items
 
     def post(self, request):
-
         if 'original_image' not in request.FILES:
             return Response(
                 {"original_image": ["This field is required."]},
@@ -394,28 +394,47 @@ class BillCreateView(APIView):
 
         if serializer.is_valid():
             img_file = serializer_data['original_image']
-            img = Image.open(img_file)
 
-            pdf_buffer = BytesIO()
-            img.save(pdf_buffer, format='PDF')
-            pdf_buffer.seek(0)
+            # Convert image to PDF
+            try:
+                img = Image.open(img_file)
 
-            pdf_name = f"{img_file.name.split('.')[0]}.pdf"
-            pdf_file = InMemoryUploadedFile(
-                pdf_buffer,
-                None,
-                pdf_name,
-                'application/pdf',
-                pdf_buffer.getbuffer().nbytes,
-                None
-            )
+                # Convert image to RGB if necessary (for PDF compatibility)
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
 
-            bill = serializer.save(
-                user=request.user,
-                pdf_file=pdf_file
-            )
+                # Create PDF buffer
+                pdf_buffer = BytesIO()
+                img.save(pdf_buffer, format='PDF', quality=95)
+                pdf_buffer.seek(0)
 
-            return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)
+                # Create PDF filename based on original image name
+                original_name = img_file.name.split('.')[0]
+                pdf_name = f"{original_name}.pdf"
+
+                # Create Django file object from PDF buffer
+                pdf_content = ContentFile(pdf_buffer.getvalue())
+                pdf_content.name = pdf_name
+
+                # Save the bill (the serializer will handle creating items via the nested relationship)
+                bill = serializer.save(user=request.user)
+
+                # Then save the PDF file - this will use the upload_to='bills/pdf/' path from the model
+                bill.pdf_file.save(pdf_name, pdf_content, save=True)
+
+                logger.info(
+                    f"Bill created successfully with PDF saved to: {bill.pdf_file.name}")
+                logger.info(
+                    f"Original image saved to: {bill.original_image.name}")
+
+                return Response(BillSerializer(bill).data, status=status.HTTP_201_CREATED)
+
+            except Exception as e:
+                logger.error(f"Error processing image to PDF: {str(e)}")
+                return Response(
+                    {"error": f"Error processing image: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

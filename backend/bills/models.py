@@ -36,7 +36,6 @@ class Bill(models.Model):
         blank=True,
         help_text="kWh for electricity, m³ for water"
     )
-    # REMOVED: items JSONField
     original_image = models.ImageField(
         upload_to='bills/original/'
     )
@@ -50,7 +49,6 @@ class Bill(models.Model):
     def __str__(self):
         return f"{self.category} Bill - {self.payment_date}"
 
-# NEW ITEM MODEL
 class Item(models.Model):
     bill = models.ForeignKey(
         Bill,

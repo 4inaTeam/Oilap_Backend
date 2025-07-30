@@ -16,7 +16,7 @@ urlpatterns = [
     path('bills/<int:bill_id>/', BillDetailView.as_view(), name='bill-detail'),
 
     path('bills/statistics/', BillStatisticsView.as_view(), name='bill-statistics'),
-    path('bills/<int:bill_id>/download/',
+        path('bills/<int:bill_id>/download/',
          BillPDFDownloadView.as_view(), name='bill-pdf-download'),
     path('bills/<int:bill_id>/view/',
          BillPDFViewView.as_view(), name='bill-pdf-view'),

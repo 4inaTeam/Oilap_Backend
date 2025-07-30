@@ -83,8 +83,6 @@ class BillSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
 
-        for item in items_data:
-            print(f"Item data: {item}")
 
         bill = Bill.objects.create(**validated_data)
 

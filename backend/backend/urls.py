@@ -93,6 +93,4 @@ if settings.DEBUG:
         path('api/debug/media/', debug_media_info, name='debug_media'),
     ]
 
-print(f"URL patterns configured. Debug mode: {settings.DEBUG}")
-print(f"Media URL pattern: {settings.MEDIA_URL}")
-print(f"Static URL pattern: {settings.STATIC_URL}")
+
