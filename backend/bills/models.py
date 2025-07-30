@@ -1,7 +1,9 @@
 # bills/models.py
 from django.db import models
 from django.utils import timezone
+from django.conf import settings
 from users.models import CustomUser
+
 
 class Bill(models.Model):
     CATEGORY_CHOICES = [
@@ -46,8 +48,66 @@ class Bill(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ['-created_at']
+
     def __str__(self):
         return f"{self.category} Bill - {self.payment_date}"
+
+    def get_absolute_image_url(self):
+        """
+        🔧 FIX: Return absolute URL for original image
+        """
+        if not self.original_image:
+            return None
+
+        # Get the image URL
+        image_url = str(self.original_image.url)
+
+        # If it's already a full URL (Cloudinary), return as-is
+        if image_url.startswith('http'):
+            return image_url
+
+        # For local files in production, construct absolute URL
+        if hasattr(settings, 'USE_ABSOLUTE_URLS') and settings.USE_ABSOLUTE_URLS:
+            base_url = getattr(settings, 'PRODUCTION_DOMAIN',
+                               'https://oilap-backend-1.onrender.com')
+
+            # Remove leading slash if present
+            if image_url.startswith('/'):
+                image_url = image_url[1:]
+
+            return f"{base_url}/{image_url}"
+
+        return self.original_image.url
+
+    def get_absolute_pdf_url(self):
+        """
+        🔧 FIX: Return absolute URL for PDF file
+        """
+        if not self.pdf_file:
+            return None
+
+        # Get the PDF URL
+        pdf_url = str(self.pdf_file.url)
+
+        # If it's already a full URL (Cloudinary), return as-is
+        if pdf_url.startswith('http'):
+            return pdf_url
+
+        # For local files in production, construct absolute URL
+        if hasattr(settings, 'USE_ABSOLUTE_URLS') and settings.USE_ABSOLUTE_URLS:
+            base_url = getattr(settings, 'PRODUCTION_DOMAIN',
+                               'https://oilap-backend-1.onrender.com')
+
+            # Remove leading slash if present
+            if pdf_url.startswith('/'):
+                pdf_url = pdf_url[1:]
+
+            return f"{base_url}/{pdf_url}"
+
+        return self.pdf_file.url
+
 
 class Item(models.Model):
     bill = models.ForeignKey(

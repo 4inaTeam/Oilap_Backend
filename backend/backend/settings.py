@@ -45,7 +45,22 @@ def initialize_firebase_once():
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.31.146', '[::1]', '*']
+
+# 🔧 CRITICAL FIX: Force production domain for media URLs
+RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+
+# 🔧 FIX: Update ALLOWED_HOSTS with production domain
+ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    '192.168.31.146',
+    '[::1]',
+    'oilap-backend-1.onrender.com',  # Your production domain
+]
+
+# Add Render hostname if available
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -233,13 +248,19 @@ STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'templates'),
 ]
 
-MEDIA_URL = '/uploads/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'user_uploads')
-
-os.makedirs(MEDIA_ROOT, exist_ok=True)
-os.makedirs(MEDIA_ROOT, exist_ok=True)
-
+# 🔧 CRITICAL FIX: Media files configuration with forced production URLs
 if os.environ.get('RENDER'):
+    # Production on Render
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Changed from 'user_uploads'
+
+    # 🔧 FIX: Force production URL for media
+    if RENDER_EXTERNAL_HOSTNAME:
+        MEDIA_URL = f'https://{RENDER_EXTERNAL_HOSTNAME}/uploads/'
+    else:
+        # Fallback to your known production domain
+        MEDIA_URL = 'https://oilap-backend-1.onrender.com/uploads/'
+
+    # Check if Cloudinary is properly configured
     cloudinary_configured = all([
         os.getenv('CLOUDINARY_CLOUD_NAME'),
         os.getenv('CLOUDINARY_API_KEY'),
@@ -248,23 +269,25 @@ if os.environ.get('RENDER'):
 
     if cloudinary_configured:
         DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+        print("✅ Production: Using Cloudinary for file storage")
     else:
         DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+        print("⚠️  Production: Cloudinary not configured, using local storage")
+
+    print(f"🌍 Production Media URL: {MEDIA_URL}")
 else:
+    # Development
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Changed from 'user_uploads'
+    MEDIA_URL = '/uploads/'
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    print(f"🔧 Development Media URL: {MEDIA_URL}")
 
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'templates'),
-]
+# Ensure media directory exists
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
-# Update the staticfiles dirs to remove the old media path
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'templates'),
-]
-
-# Add the correct media path for serving in development
-if os.path.exists(MEDIA_ROOT):
-    STATICFILES_DIRS.append(MEDIA_ROOT)
+# 🔧 NEW: Add settings to force absolute URLs in production
+USE_ABSOLUTE_URLS = os.environ.get('RENDER', False)
+PRODUCTION_DOMAIN = 'https://oilap-backend-1.onrender.com'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -285,15 +308,28 @@ TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
 TWILIO_ENABLED = os.getenv('TWILIO_ENABLED', 'False') == 'True'
 
-# Tesseract OCR Configuration
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
+# Tesseract OCR Configuration (only for local development)
+if not os.environ.get('RENDER'):
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
+
 CONFIDENCE_THRESHOLD = 0.7
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = ('png', 'jpg', 'jpeg')
 
-# CORS Configuration
-CORS_ALLOW_ALL_ORIGINS = True
+# 🔧 FIX: CORS Configuration for production
+CORS_ALLOW_ALL_ORIGINS = True  # For development/testing
+
+# Add your production domain to allowed origins
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://oilap-backend-1.onrender.com",
+]
+
+if RENDER_EXTERNAL_HOSTNAME:
+    CORS_ALLOWED_ORIGINS.append(f"https://{RENDER_EXTERNAL_HOSTNAME}")
+
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_METHODS = [
@@ -315,6 +351,7 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'cache-control',
 ]
 
 # Cloudinary Configuration
@@ -325,7 +362,10 @@ CLOUDINARY_STORAGE = {
 }
 
 # File Storage Configuration - Use Cloudinary for new uploads, but support both
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+if os.environ.get('RENDER') and all([os.getenv('CLOUDINARY_CLOUD_NAME'), os.getenv('CLOUDINARY_API_KEY'), os.getenv('CLOUDINARY_API_SECRET')]):
+    DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+else:
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
 # Enhanced Logging Configuration with Bills debugging
 LOGGING = {
@@ -425,4 +465,13 @@ initialize_firebase_once()
 if os.path.exists(MEDIA_ROOT):
     STATICFILES_DIRS.append(MEDIA_ROOT)
 
-
+# Debug prints
+print(
+    f"🌍 Environment: {'PRODUCTION' if os.environ.get('RENDER') else 'DEVELOPMENT'}")
+print(f"📁 MEDIA_ROOT: {MEDIA_ROOT}")
+print(f"🔗 MEDIA_URL: {MEDIA_URL}")
+print(f"💾 DEFAULT_FILE_STORAGE: {DEFAULT_FILE_STORAGE}")
+print(f"☁️  Cloudinary configured: {bool(os.getenv('CLOUDINARY_CLOUD_NAME'))}")
+print(f"🌐 ALLOWED_HOSTS: {ALLOWED_HOSTS}")
+print(f"🔗 USE_ABSOLUTE_URLS: {USE_ABSOLUTE_URLS}")
+print(f"🏢 PRODUCTION_DOMAIN: {PRODUCTION_DOMAIN}")

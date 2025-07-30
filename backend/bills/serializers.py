@@ -1,5 +1,6 @@
-# Updated serializers.py
+# bills/serializers.py
 from rest_framework import serializers
+from django.conf import settings
 from .models import Bill, Item
 from django.contrib.auth import get_user_model
 
@@ -23,13 +24,28 @@ class UserInfoSerializer(serializers.ModelSerializer):
 
 class BillSerializer(serializers.ModelSerializer):
     items = ItemSerializer(many=True, required=False)  # Nested serializer
-    user_info = UserInfoSerializer(
-        source='user', read_only=True)  # Add user info
+    user_info = UserInfoSerializer(source='user', read_only=True)
+
+    # 🔧 FIX: Override image and PDF fields to return absolute URLs
+    original_image = serializers.SerializerMethodField()
+    pdf_file = serializers.SerializerMethodField()
 
     class Meta:
         model = Bill
         fields = '__all__'
-        read_only_fields = ('user', 'pdf_file', 'user_info')
+        read_only_fields = ('user', 'user_info')
+
+    def get_original_image(self, obj):
+        """
+        🔧 FIX: Return absolute URL for original image
+        """
+        return obj.get_absolute_image_url()
+
+    def get_pdf_file(self, obj):
+        """
+        🔧 FIX: Return absolute URL for PDF file
+        """
+        return obj.get_absolute_pdf_url()
 
     def validate(self, data):
         category = data.get('category')
@@ -82,7 +98,6 @@ class BillSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
-
 
         bill = Bill.objects.create(**validated_data)
 
@@ -167,16 +182,29 @@ class BillUpdateSerializer(serializers.ModelSerializer):
 
 
 class BillListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for list views"""
+    """Lightweight serializer for list views with absolute URLs"""
     items_count = serializers.SerializerMethodField()
     user_info = UserInfoSerializer(source='user', read_only=True)
+
+    # 🔧 FIX: Override image and PDF fields for list view too
+    original_image = serializers.SerializerMethodField()
+    pdf_file = serializers.SerializerMethodField()
 
     class Meta:
         model = Bill
         fields = [
             'id', 'owner', 'category', 'amount', 'payment_date',
-            'consumption', 'created_at', 'items_count', 'user_info'
+            'consumption', 'created_at', 'items_count', 'user_info',
+            'original_image', 'pdf_file'
         ]
+
+    def get_original_image(self, obj):
+        """Return absolute URL for original image in list view"""
+        return obj.get_absolute_image_url()
+
+    def get_pdf_file(self, obj):
+        """Return absolute URL for PDF file in list view"""
+        return obj.get_absolute_pdf_url()
 
     def get_items_count(self, obj):
         return obj.items.count() if obj.category == 'purchase' else 0
