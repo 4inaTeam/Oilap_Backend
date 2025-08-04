@@ -40,24 +40,22 @@ urlpatterns = [
          cache_timeout=0), name='schema-swagger-ui'),
 ]
 
-# Static files (CSS, JavaScript, Images)
+
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
-# Media files handling - serve both local files and support Cloudinary
+
 if settings.DEBUG:
-    # Development: serve media files directly
+
     urlpatterns += static(settings.MEDIA_URL,
                           document_root=settings.MEDIA_ROOT)
 else:
-    # Production: serve local media files that might exist alongside Cloudinary
-    # This handles cases where some files might be stored locally
+
     urlpatterns += [
         re_path(r'^uploads/(?P<path>.*)$', serve, {
             'document_root': settings.MEDIA_ROOT,
         }),
     ]
 
-# Add a debug endpoint to check media file serving
 if settings.DEBUG:
     from django.http import JsonResponse
     from django.views.decorators.csrf import csrf_exempt
@@ -72,7 +70,6 @@ if settings.DEBUG:
             'cloudinary_configured': bool(getattr(settings, 'CLOUDINARY_STORAGE', {}).get('CLOUD_NAME')),
         }
 
-        # List files in media directory
         if os.path.exists(settings.MEDIA_ROOT):
             try:
                 media_files = []
@@ -81,7 +78,6 @@ if settings.DEBUG:
                         rel_path = os.path.relpath(
                             os.path.join(root, file), settings.MEDIA_ROOT)
                         media_files.append(rel_path)
-                # First 10 files
                 media_info['local_media_files'] = media_files[:10]
                 media_info['total_local_files'] = len(media_files)
             except Exception as e:
@@ -89,8 +85,6 @@ if settings.DEBUG:
 
         return JsonResponse(media_info)
 
-    urlpatterns += [
-        path('api/debug/media/', debug_media_info, name='debug_media'),
-    ]
+
 
 

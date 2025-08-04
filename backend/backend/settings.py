@@ -32,7 +32,6 @@ FIREBASE_SERVER_KEY = os.getenv('FIREBASE_SERVER_KEY', "")
 def initialize_firebase_once():
     """Initialize Firebase when Django starts"""
     try:
-        # Only initialize if not already done
         import firebase_admin
         if not firebase_admin._apps:
             from tickets.firebase_service import initialize_firebase
@@ -46,16 +45,14 @@ def initialize_firebase_once():
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-# 🔧 CRITICAL FIX: Force production domain for media URLs
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 
-# 🔧 FIX: Update ALLOWED_HOSTS with production domain
 ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
     '192.168.31.146',
     '[::1]',
-    'oilap-backend-1.onrender.com',  # Your production domain
+    'oilap-backend-1.onrender.com',
 ]
 
 # Add Render hostname if available
@@ -124,7 +121,7 @@ try:
     DATABASES = {
         'default': dj_database_url.parse(
             DATABASE_URL,
-            conn_max_age=600,
+            conn_max_age=60,
             conn_health_checks=True
         )
     }
@@ -156,7 +153,7 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': False,  # Set to False for better compatibility
+    'BLACKLIST_AFTER_ROTATION': False,
     'UPDATE_LAST_LOGIN': True,
     'ALGORITHM': 'HS256',
     'AUTH_HEADER_TYPES': ('Bearer',),
@@ -269,18 +266,14 @@ if os.environ.get('RENDER'):
 
     if cloudinary_configured:
         DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-        print("✅ Production: Using Cloudinary for file storage")
     else:
         DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
-        print("⚠️  Production: Cloudinary not configured, using local storage")
 
-    print(f"🌍 Production Media URL: {MEDIA_URL}")
 else:
     # Development
     MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Changed from 'user_uploads'
     MEDIA_URL = '/uploads/'
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
-    print(f"🔧 Development Media URL: {MEDIA_URL}")
 
 # Ensure media directory exists
 os.makedirs(MEDIA_ROOT, exist_ok=True)
@@ -464,14 +457,3 @@ initialize_firebase_once()
 # Add media to STATICFILES_DIRS so it gets served properly
 if os.path.exists(MEDIA_ROOT):
     STATICFILES_DIRS.append(MEDIA_ROOT)
-
-# Debug prints
-print(
-    f"🌍 Environment: {'PRODUCTION' if os.environ.get('RENDER') else 'DEVELOPMENT'}")
-print(f"📁 MEDIA_ROOT: {MEDIA_ROOT}")
-print(f"🔗 MEDIA_URL: {MEDIA_URL}")
-print(f"💾 DEFAULT_FILE_STORAGE: {DEFAULT_FILE_STORAGE}")
-print(f"☁️  Cloudinary configured: {bool(os.getenv('CLOUDINARY_CLOUD_NAME'))}")
-print(f"🌐 ALLOWED_HOSTS: {ALLOWED_HOSTS}")
-print(f"🔗 USE_ABSOLUTE_URLS: {USE_ABSOLUTE_URLS}")
-print(f"🏢 PRODUCTION_DOMAIN: {PRODUCTION_DOMAIN}")
