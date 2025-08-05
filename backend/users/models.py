@@ -211,10 +211,6 @@ class CustomUser(AbstractUser):
         null=True,
         verbose_name=_("FCM Token updated at")
     )
-    password_history = models.JSONField(default=list, blank=True)
-    password_changed_at = models.DateTimeField(default=timezone.now)
-    failed_login_attempts = models.IntegerField(default=0)
-    last_failed_login = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.username
