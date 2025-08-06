@@ -30,7 +30,67 @@ from rest_framework.exceptions import NotFound
 from django.db.models import Sum, Count, Q
 from django.db.models.functions import Coalesce
 
+# Cache imports
+from django.core.cache import cache
+import hashlib
+import json
+
 logger = logging.getLogger(__name__)
+
+# Simple cache manager for products
+class ProductCacheManager:
+    @staticmethod
+    def generate_cache_key(prefix, *args, **kwargs):
+        key_parts = [prefix]
+        key_parts.extend([str(arg) for arg in args])
+        if kwargs:
+            sorted_kwargs = sorted(kwargs.items())
+            kwargs_str = json.dumps(sorted_kwargs, sort_keys=True)
+            key_parts.append(hashlib.md5(kwargs_str.encode()).hexdigest()[:8])
+        return ':'.join(key_parts)
+
+    @staticmethod
+    def get_cache(prefix, *args, **kwargs):
+        key = ProductCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.get(key)
+
+    @staticmethod
+    def set_cache(prefix, data, timeout, *args, **kwargs):
+        key = ProductCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.set(key, data, timeout)
+
+    @staticmethod
+    def delete_cache(prefix, *args, **kwargs):
+        key = ProductCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.delete(key)
+
+    @staticmethod
+    def clear_user_related_cache(user_id):
+        """Clear all cache entries related to a specific user"""
+        # This is a simplified approach - in production, you might want to use cache patterns
+        keys_to_delete = [
+            f'products_list_{user_id}',
+            f'client_products_{user_id}',
+            'product_stats',
+            'total_quantity',
+            'origin_percentages'
+        ]
+        for key in keys_to_delete:
+            cache.delete(key)
+
+    @staticmethod
+    def clear_all_product_cache():
+        """Clear all product-related cache"""
+        # Clear common cache keys
+        cache_keys = [
+            'product_stats',
+            'total_quantity', 
+            'origin_percentages',
+            'products_list',
+            'client_products'
+        ]
+        for key in cache_keys:
+            cache.delete(key)
 
 
 class IsAdminOrEmployee(permissions.BasePermission):
@@ -42,6 +102,24 @@ class ProductCreateView(generics.CreateAPIView):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        
+        if response.status_code == status.HTTP_201_CREATED:
+            # Clear relevant caches after product creation
+            ProductCacheManager.clear_all_product_cache()
+            
+            # Clear user-specific caches if applicable
+            product_data = response.data
+            if 'client' in product_data:
+                client_id = product_data.get('client')
+                if client_id:
+                    ProductCacheManager.clear_user_related_cache(client_id)
+            
+            logger.info(f"Cache cleared after product creation: {product_data.get('id')}")
+            
+        return response
 
 
 class ProductRetrieveView(generics.RetrieveAPIView):
@@ -66,6 +144,27 @@ class ProductRetrieveView(generics.RetrieveAPIView):
             )
 
         return obj
+
+    def retrieve(self, request, *args, **kwargs):
+        """Override to add caching for individual product retrieval"""
+        product_id = kwargs.get('pk')
+        user_id = request.user.id
+        
+        # Try cache first
+        cached_product = ProductCacheManager.get_cache('product_detail', product_id, user_id)
+        if cached_product:
+            logger.info(f"Cache hit for product detail: {product_id}, user: {user_id}")
+            return Response(cached_product)
+        
+        # Get data using parent method
+        response = super().retrieve(request, *args, **kwargs)
+        
+        # Cache for 15 minutes if successful
+        if response.status_code == 200:
+            ProductCacheManager.set_cache('product_detail', response.data, 900, product_id, user_id)
+            logger.info(f"Cache set for product detail: {product_id}, user: {user_id}")
+        
+        return response
 
 
 class ProductUpdateView(generics.UpdateAPIView):
@@ -120,6 +219,31 @@ class ProductUpdateView(generics.UpdateAPIView):
 
         return saved_instance
 
+    def update(self, request, *args, **kwargs):
+        """Override to clear cache after update"""
+        response = super().update(request, *args, **kwargs)
+        
+        if response.status_code == 200:
+            product_id = kwargs.get('pk')
+            
+            # Clear all product-related caches
+            ProductCacheManager.clear_all_product_cache()
+            
+            # Clear specific product detail cache
+            ProductCacheManager.delete_cache('product_detail', product_id)
+            
+            # Clear user-related caches
+            try:
+                product = Product.objects.get(id=product_id)
+                if product.client:
+                    ProductCacheManager.clear_user_related_cache(product.client.id)
+            except Product.DoesNotExist:
+                pass
+            
+            logger.info(f"Cache cleared after product update: {product_id}")
+            
+        return response
+
 
 class CancelProductView(generics.UpdateAPIView):
     queryset = Product.objects.all()
@@ -136,6 +260,21 @@ class CancelProductView(generics.UpdateAPIView):
         serializer.validated_data['status'] = 'canceled'
         serializer.save()
 
+    def update(self, request, *args, **kwargs):
+        """Override to clear cache after cancellation"""
+        response = super().update(request, *args, **kwargs)
+        
+        if response.status_code == 200:
+            product_id = kwargs.get('pk')
+            
+            # Clear caches after cancellation
+            ProductCacheManager.clear_all_product_cache()
+            ProductCacheManager.delete_cache('product_detail', product_id)
+            
+            logger.info(f"Cache cleared after product cancellation: {product_id}")
+            
+        return response
+
 
 class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
@@ -148,6 +287,31 @@ class ProductListView(generics.ListAPIView):
             return Product.objects.all()
         return Product.objects.filter(client=user)
 
+    def list(self, request, *args, **kwargs):
+        """Override to add caching"""
+        user_id = request.user.id
+        user_role = request.user.role
+        
+        # Create cache key including query parameters
+        query_params = dict(request.GET)
+        query_hash = hashlib.md5(json.dumps(query_params, sort_keys=True).encode()).hexdigest()[:8]
+        
+        # Try cache first
+        cached_result = ProductCacheManager.get_cache('products_list', user_id, user_role, query_hash)
+        if cached_result:
+            logger.info(f"Cache hit for product list: user {user_id}")
+            return Response(cached_result)
+        
+        # Get data using parent method
+        response = super().list(request, *args, **kwargs)
+        
+        # Cache for 10 minutes if successful
+        if response.status_code == 200:
+            ProductCacheManager.set_cache('products_list', response.data, 600, user_id, user_role, query_hash)
+            logger.info(f"Cache set for product list: user {user_id}")
+        
+        return response
+
 
 class ClientProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
@@ -158,18 +322,50 @@ class ClientProductListView(generics.ListAPIView):
             .select_related('client', 'created_by')\
             .order_by('-created_at')
 
+    def list(self, request, *args, **kwargs):
+        """Override to add caching for client products"""
+        user_id = request.user.id
+        
+        # Try cache first
+        cached_result = ProductCacheManager.get_cache('client_products', user_id)
+        if cached_result:
+            logger.info(f"Cache hit for client products: user {user_id}")
+            return Response(cached_result)
+        
+        # Get data using parent method
+        response = super().list(request, *args, **kwargs)
+        
+        # Cache for 5 minutes if successful
+        if response.status_code == 200:
+            ProductCacheManager.set_cache('client_products', response.data, 300, user_id)
+            logger.info(f"Cache set for client products: user {user_id}")
+        
+        return response
+
 
 class SearchProductByStatus(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def get(self, request, status):
         try:
+            # Check cache first
+            cached_result = ProductCacheManager.get_cache('products_by_status', status)
+            if cached_result:
+                logger.info(f"Cache hit for products by status: {status}")
+                return Response(cached_result)
+            
             products = Product.objects.filter(status=status)
             if not products.exists():
                 return Response({"message": "No products found with this status."}, status=404)
 
             serializer = ProductSerializer(products, many=True)
-            return Response(serializer.data)
+            result_data = serializer.data
+            
+            # Cache for 5 minutes
+            ProductCacheManager.set_cache('products_by_status', result_data, 300, status)
+            logger.info(f"Cache set for products by status: {status}")
+            
+            return Response(result_data)
         except Product.DoesNotExist:
             return Response({"message": "Product not found."}, status=404)
 
@@ -186,6 +382,27 @@ class AdminClientProductListView(generics.ListAPIView):
             raise NotFound(detail="Client not found or invalid client role")
 
         return Product.objects.filter(client=client)
+
+    def list(self, request, *args, **kwargs):
+        """Override to add caching for admin client product list"""
+        client_id = self.kwargs['client_id']
+        user_id = request.user.id
+        
+        # Try cache first
+        cached_result = ProductCacheManager.get_cache('admin_client_products', client_id, user_id)
+        if cached_result:
+            logger.info(f"Cache hit for admin client products: client {client_id}, user {user_id}")
+            return Response(cached_result)
+        
+        # Get data using parent method
+        response = super().list(request, *args, **kwargs)
+        
+        # Cache for 10 minutes if successful
+        if response.status_code == 200:
+            ProductCacheManager.set_cache('admin_client_products', response.data, 600, client_id, user_id)
+            logger.info(f"Cache set for admin client products: client {client_id}, user {user_id}")
+        
+        return response
 
 
 class ProductReportView(APIView):
@@ -205,6 +422,26 @@ class ProductReportView(APIView):
             date_to = request.GET.get('date_to', '')
             quality_filter = request.GET.get('quality', '')
 
+            # Create cache key for reports
+            report_params = {
+                'format': format_type,
+                'status': status_filter,
+                'client': client_filter,
+                'date_from': date_from,
+                'date_to': date_to,
+                'quality': quality_filter,
+                'user_id': request.user.id,
+                'user_role': request.user.role
+            }
+            report_hash = hashlib.md5(json.dumps(report_params, sort_keys=True).encode()).hexdigest()[:8]
+            
+            # For reports, we cache for shorter time due to file nature
+            cached_report = ProductCacheManager.get_cache('product_report', report_hash)
+            if cached_report:
+                logger.info(f"Cache hit for product report: {report_hash}")
+                # Note: For file responses, you might want to handle this differently
+                # This is just for demonstration
+            
             # Base queryset with select_related for performance
             queryset = Product.objects.all().select_related('client', 'created_by')
 
@@ -515,6 +752,13 @@ class SingleProductPDFView(View):
 
     def get(self, request, product_id):
         try:
+            # Check cache first for PDF
+            user_id = request.user.id
+            cached_pdf = ProductCacheManager.get_cache('product_pdf', product_id, user_id)
+            if cached_pdf:
+                logger.info(f"Cache hit for product PDF: {product_id}, user: {user_id}")
+                # Return cached PDF data - you might need to adjust this based on your caching strategy
+            
             # Debug logging
             logger.info(
                 f"PDF download request for product {product_id} by user {request.user.id}")
@@ -574,6 +818,9 @@ class SingleProductPDFView(View):
 
             # Generate PDF
             pdf_data = self._generate_product_pdf(product, user)
+
+            # Cache PDF data for 30 minutes (optional - be careful with binary data caching)
+            # ProductCacheManager.set_cache('product_pdf', pdf_data, 1800, product_id, user_id)
 
             # Create HttpResponse with proper headers
             response = HttpResponse(pdf_data, content_type='application/pdf')
@@ -744,8 +991,6 @@ class SingleProductPDFView(View):
 
 
 # Alternative: Even simpler function-based view
-
-
 @csrf_exempt
 @require_http_methods(["GET"])
 def simple_product_pdf_download(request, product_id):
@@ -844,6 +1089,12 @@ class ProductStatsView(APIView):
 
     def get(self, request):
         try:
+            # Check cache first
+            cached_stats = ProductCacheManager.get_cache('product_stats')
+            if cached_stats:
+                logger.info("Cache hit for product statistics")
+                return Response(cached_stats)
+
             total_products = Product.objects.count()
             pending_products = Product.objects.filter(status='pending').count()
             doing_products = Product.objects.filter(status='doing').count()
@@ -860,7 +1111,7 @@ class ProductStatsView(APIView):
                 quality_stats[choice[0]] = Product.objects.filter(
                     quality=choice[0]).count()
 
-            return Response({
+            stats_data = {
                 'total_products': total_products,
                 'status_distribution': {
                     'pending': pending_products,
@@ -873,7 +1124,13 @@ class ProductStatsView(APIView):
                     'paid': paid_products
                 },
                 'quality_distribution': quality_stats
-            })
+            }
+
+            # Cache for 10 minutes
+            ProductCacheManager.set_cache('product_stats', stats_data, 600)
+            logger.info("Cache set for product statistics")
+
+            return Response(stats_data)
         except Exception as e:
             logger.error(f"Error getting product stats: {str(e)}")
             return Response({'error': 'Failed to get statistics'}, status=500)
@@ -887,17 +1144,26 @@ class TotalQuantityView(APIView):
 
     def get(self, request):
         try:
+            # Check cache first
+            cached_quantity = ProductCacheManager.get_cache('total_quantity')
+            if cached_quantity:
+                logger.info("Cache hit for total quantity")
+                return Response(cached_quantity)
+
             # First, let's check if there are any products
             total_products = Product.objects.count()
             logger.info(f"Total products count: {total_products}")
 
             if total_products == 0:
-                return Response({
+                empty_result = {
                     'total_quantity': 0,
                     'total_oil_volume': 0,
                     'overall_yield_percentage': 0,
                     'message': 'No products found'
-                }, status=status.HTTP_200_OK)
+                }
+                # Cache empty result for shorter time
+                ProductCacheManager.set_cache('total_quantity', empty_result, 60)
+                return Response(empty_result, status=status.HTTP_200_OK)
 
             # Calculate total quantity of olives across all products
             total_quantity_result = Product.objects.aggregate(
@@ -979,13 +1245,19 @@ class TotalQuantityView(APIView):
                     'total_oil': float(status_oil)
                 }
 
-            return Response({
+            quantity_data = {
                 'total_quantity': float(total_quantity),
                 'total_oil_volume': float(total_oil_volume),
                 'overall_yield_percentage': round(overall_yield_percentage, 2),
                 'quantity_by_status': quantity_by_status,
                 'total_products': total_products
-            }, status=status.HTTP_200_OK)
+            }
+
+            # Cache for 15 minutes
+            ProductCacheManager.set_cache('total_quantity', quantity_data, 900)
+            logger.info("Cache set for total quantity")
+
+            return Response(quantity_data, status=status.HTTP_200_OK)
 
         except Exception as e:
             import traceback
@@ -1017,17 +1289,26 @@ class OriginPercentageView(APIView):
 
     def get(self, request):
         try:
+            # Check cache first
+            cached_origins = ProductCacheManager.get_cache('origin_percentages')
+            if cached_origins:
+                logger.info("Cache hit for origin percentages")
+                return Response(cached_origins)
+
             # Get total count of products (excluding those without origin)
             total_products = Product.objects.exclude(
                 Q(origine__isnull=True) | Q(origine__exact='')
             ).count()
 
             if total_products == 0:
-                return Response({
+                empty_result = {
                     'message': 'No products with origins found',
                     'total_products': 0,
                     'origin_percentages': []
-                }, status=status.HTTP_200_OK)
+                }
+                # Cache empty result for shorter time
+                ProductCacheManager.set_cache('origin_percentages', empty_result, 60)
+                return Response(empty_result, status=status.HTTP_200_OK)
 
             # Get count by origin
             origin_counts = Product.objects.exclude(
@@ -1060,7 +1341,7 @@ class OriginPercentageView(APIView):
                     'quantity_percentage': round(quantity_percentage, 2)
                 })
 
-            return Response({
+            origin_data = {
                 'total_products_with_origin': total_products,
                 'origin_percentages': origin_percentages,
                 'summary': {
@@ -1068,7 +1349,13 @@ class OriginPercentageView(APIView):
                     'most_common_origin': origin_percentages[0]['origin'] if origin_percentages else None,
                     'most_common_origin_percentage': origin_percentages[0]['percentage'] if origin_percentages else 0
                 }
-            }, status=status.HTTP_200_OK)
+            }
+
+            # Cache for 15 minutes
+            ProductCacheManager.set_cache('origin_percentages', origin_data, 900)
+            logger.info("Cache set for origin percentages")
+
+            return Response(origin_data, status=status.HTTP_200_OK)
 
         except Exception as e:
             logger.error(f"Error getting origin percentages: {str(e)}")

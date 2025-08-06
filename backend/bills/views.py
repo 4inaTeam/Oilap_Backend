@@ -1,3 +1,5 @@
+# bills/views.py - Complete file with caching
+
 from django.db.models import Q, Sum, Count, Case, When, DecimalField
 from rest_framework import status
 from rest_framework.views import APIView
@@ -22,8 +24,44 @@ import requests
 import logging
 from django.core.files.base import ContentFile
 
+# Cache imports
+from django.core.cache import cache
+from django.views.decorators.cache import cache_page
+from django.utils.decorators import method_decorator
+from django.views.decorators.vary import vary_on_headers
+import hashlib
+
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+# Simple cache manager (inline to avoid import issues)
+
+
+class SimpleCacheManager:
+    @staticmethod
+    def generate_cache_key(prefix, *args, **kwargs):
+        key_parts = [prefix]
+        key_parts.extend([str(arg) for arg in args])
+        if kwargs:
+            sorted_kwargs = sorted(kwargs.items())
+            kwargs_str = json.dumps(sorted_kwargs, sort_keys=True)
+            key_parts.append(hashlib.md5(kwargs_str.encode()).hexdigest()[:8])
+        return ':'.join(key_parts)
+
+    @staticmethod
+    def get_cache(prefix, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.get(key)
+
+    @staticmethod
+    def set_cache(prefix, data, timeout, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.set(key, data, timeout)
+
+    @staticmethod
+    def delete_cache(prefix, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.delete(key)
 
 
 class BillStatisticsView(APIView):
@@ -115,22 +153,29 @@ class BillStatisticsView(APIView):
             }
         }
 
+    @method_decorator(vary_on_headers('Authorization'))
     def get(self, request):
         """
-        Get separated statistics for expenses and revenue:
-        - Total expenses: bills only (water + electricity + purchase)
-        - Total revenue: client factures only
-        - Percentage breakdown by category (calculated based on total of expenses + revenue)
-        - Payment status statistics for factures
+        Get separated statistics for expenses and revenue with caching
         """
+        # Generate cache key based on user and role
+        user_id = request.user.id
+        user_role = getattr(request.user, 'role', 'client').lower()
+
+        # Try to get from cache
+        cached_stats = SimpleCacheManager.get_cache(
+            'bill_stats', user_id, user_role)
+        if cached_stats:
+            logger.info(f"Cache hit for bill statistics: user {user_id}")
+            return Response(cached_stats, status=status.HTTP_200_OK)
+
         bills = self.get_accessible_bills(request.user)
         factures = self.get_accessible_factures(request.user)
 
         # Calculate totals separately
-        bills_total = bills.aggregate(total=Sum('amount'))[
-            'total'] or 0
-        factures_total = factures.aggregate(total=Sum('final_total'))[
-            'total'] or 0
+        bills_total = bills.aggregate(total=Sum('amount'))['total'] or 0
+        factures_total = factures.aggregate(
+            total=Sum('final_total'))['total'] or 0
 
         # Calculate combined total for percentage calculations
         combined_total = bills_total + factures_total
@@ -251,6 +296,11 @@ class BillStatisticsView(APIView):
                 }
             }
         }
+
+        # Cache the result for 15 minutes
+        SimpleCacheManager.set_cache(
+            'bill_stats', response_data, 900, user_id, user_role)
+        logger.info(f"Cache set for bill statistics: user {user_id}")
 
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -422,6 +472,11 @@ class BillCreateView(APIView):
                 # Then save the PDF file - this will use the upload_to='bills/pdf/' path from the model
                 bill.pdf_file.save(pdf_name, pdf_content, save=True)
 
+                # Clear cache after creating bill
+                SimpleCacheManager.delete_cache('bill_stats', request.user.id, getattr(
+                    request.user, 'role', 'client').lower())
+                SimpleCacheManager.delete_cache('bills_list', request.user.id)
+
                 logger.info(
                     f"Bill created successfully with PDF saved to: {bill.pdf_file.name}")
                 logger.info(
@@ -465,9 +520,24 @@ class BillListView(APIView):
 
     def get(self, request):
         """
-        Get all accessible bills for the authenticated user.
+        Get all accessible bills for the authenticated user with caching.
         Supports search, filtering by category, pagination, and ordering.
         """
+        user_id = request.user.id
+        user_role = getattr(request.user, 'role', 'client').lower()
+
+        # Include query parameters in cache key
+        query_params = dict(request.query_params)
+        query_hash = hashlib.md5(json.dumps(
+            query_params, sort_keys=True).encode()).hexdigest()[:8]
+
+        # Try cache first
+        cached_result = SimpleCacheManager.get_cache(
+            'bills_list', user_id, user_role, query_hash)
+        if cached_result:
+            logger.info(f"Cache hit for bill list: user {user_id}")
+            return Response(cached_result, status=status.HTTP_200_OK)
+
         bills = self.get_accessible_bills(request.user)
 
         search_query = request.query_params.get('search', '').strip()
@@ -501,7 +571,7 @@ class BillListView(APIView):
 
         serializer = BillSerializer(paginated_bills, many=True)
 
-        return Response({
+        response_data = {
             'count': total_count,
             'results': serializer.data,
             'page': page,
@@ -509,7 +579,14 @@ class BillListView(APIView):
             'total_pages': total_pages,
             'next': page < total_pages,
             'previous': page > 1
-        }, status=status.HTTP_200_OK)
+        }
+
+        # Cache for 5 minutes
+        SimpleCacheManager.set_cache(
+            'bills_list', response_data, 300, user_id, user_role, query_hash)
+        logger.info(f"Cache set for bill list: user {user_id}")
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class BillDetailView(APIView):
@@ -535,10 +612,23 @@ class BillDetailView(APIView):
 
     def get(self, request, bill_id):
         """
-        Get a specific bill by ID
+        Get a specific bill by ID with caching
         """
+        # Try cache first
+        cached_bill = SimpleCacheManager.get_cache(
+            'bill_detail', bill_id, request.user.id)
+        if cached_bill:
+            logger.info(f"Cache hit for bill detail: {bill_id}")
+            return Response(cached_bill, status=status.HTTP_200_OK)
+
         bill = self.get_object(bill_id, request.user)
         serializer = BillSerializer(bill)
+
+        # Cache for 10 minutes
+        SimpleCacheManager.set_cache(
+            'bill_detail', serializer.data, 600, bill_id, request.user.id)
+        logger.info(f"Cache set for bill detail: {bill_id}")
+
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request, bill_id):
@@ -556,6 +646,14 @@ class BillDetailView(APIView):
 
         if serializer.is_valid():
             updated_bill = serializer.save()
+
+            # Clear cache after update
+            SimpleCacheManager.delete_cache(
+                'bill_detail', bill_id, request.user.id)
+            SimpleCacheManager.delete_cache('bill_stats', request.user.id, getattr(
+                request.user, 'role', 'client').lower())
+            SimpleCacheManager.delete_cache('bills_list', request.user.id)
+
             return Response(
                 BillSerializer(updated_bill).data,
                 status=status.HTTP_200_OK
@@ -577,6 +675,14 @@ class BillDetailView(APIView):
 
         if serializer.is_valid():
             updated_bill = serializer.save()
+
+            # Clear cache after update
+            SimpleCacheManager.delete_cache(
+                'bill_detail', bill_id, request.user.id)
+            SimpleCacheManager.delete_cache('bill_stats', request.user.id, getattr(
+                request.user, 'role', 'client').lower())
+            SimpleCacheManager.delete_cache('bills_list', request.user.id)
+
             return Response(
                 BillSerializer(updated_bill).data,
                 status=status.HTTP_200_OK
@@ -588,6 +694,14 @@ class BillDetailView(APIView):
         Delete a bill
         """
         bill = self.get_object(bill_id, request.user)
+
+        # Clear cache before delete
+        SimpleCacheManager.delete_cache(
+            'bill_detail', bill_id, request.user.id)
+        SimpleCacheManager.delete_cache('bill_stats', request.user.id, getattr(
+            request.user, 'role', 'client').lower())
+        SimpleCacheManager.delete_cache('bills_list', request.user.id)
+
         bill.delete()
         return Response(
             {'message': 'Bill deleted successfully'},

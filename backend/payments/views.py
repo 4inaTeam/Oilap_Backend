@@ -1,4 +1,4 @@
-# payments/views.py
+# payments/views.py - Complete file with caching
 
 from decimal import Decimal
 import logging
@@ -15,8 +15,42 @@ from .models import Payment
 from .serializers import PaymentSerializer
 from factures.models import Facture
 
+# Cache imports
+from django.core.cache import cache
+import hashlib
+import json
+
 stripe.api_key = settings.STRIPE_SECRET_KEY
 logger = logging.getLogger(__name__)
+
+# Simple cache manager (inline to avoid import issues)
+
+
+class SimpleCacheManager:
+    @staticmethod
+    def generate_cache_key(prefix, *args, **kwargs):
+        key_parts = [prefix]
+        key_parts.extend([str(arg) for arg in args])
+        if kwargs:
+            sorted_kwargs = sorted(kwargs.items())
+            kwargs_str = json.dumps(sorted_kwargs, sort_keys=True)
+            key_parts.append(hashlib.md5(kwargs_str.encode()).hexdigest()[:8])
+        return ':'.join(key_parts)
+
+    @staticmethod
+    def get_cache(prefix, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.get(key)
+
+    @staticmethod
+    def set_cache(prefix, data, timeout, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.set(key, data, timeout)
+
+    @staticmethod
+    def delete_cache(prefix, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.delete(key)
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
@@ -34,6 +68,34 @@ class PaymentViewSet(viewsets.ModelViewSet):
         if user.role in ['ADMIN', 'ACCOUNTANT']:
             return Payment.objects.all()
         return Payment.objects.filter(facture__client=user)
+
+    def list(self, request, *args, **kwargs):
+        """Override list to add caching"""
+        user_id = request.user.id
+        user_role = request.user.role
+
+        # Create cache key
+        query_params = dict(request.query_params)
+        query_hash = hashlib.md5(json.dumps(
+            query_params, sort_keys=True).encode()).hexdigest()[:8]
+
+        # Try cache first
+        cached_result = SimpleCacheManager.get_cache(
+            'payments_list', user_id, user_role, query_hash)
+        if cached_result:
+            logger.info(f"Cache hit for payments list: user {user_id}")
+            return Response(cached_result)
+
+        # Get data using parent method
+        response = super().list(request, *args, **kwargs)
+
+        # Cache for 3 minutes if successful
+        if response.status_code == 200:
+            SimpleCacheManager.set_cache(
+                'payments_list', response.data, 180, user_id, user_role, query_hash)
+            logger.info(f"Cache set for payments list: user {user_id}")
+
+        return response
 
     def _check_permission(self, request, facture: Facture):
         role = request.user.role
@@ -89,6 +151,12 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 status='pending'
             )
 
+            # Clear payment cache after creating new payment
+            user_id = request.user.id
+            SimpleCacheManager.delete_cache('payments_list', user_id)
+            logger.info(
+                f"Cache cleared after creating web payment: {payment.id}")
+
             return Response({
                 'id': str(payment.id),
                 'client_secret': intent.client_secret,
@@ -116,11 +184,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
             facture = Facture.objects.get(id=facture_id)
         except Facture.DoesNotExist:
             return Response({'error': 'Facture not found'},
-                        status=status.HTTP_404_NOT_FOUND)
+                            status=status.HTTP_404_NOT_FOUND)
 
         if not self._check_permission(request, facture):
             return Response({'error': 'Permission denied'},
-                        status=status.HTTP_403_FORBIDDEN)
+                            status=status.HTTP_403_FORBIDDEN)
 
         if facture.final_total < Decimal('0.50'):
             return Response({
@@ -136,7 +204,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
         if not all([card_number, exp_month, exp_year, cvc]):
             return Response({'error': 'Missing required card details'},
-                status=status.HTTP_400_BAD_REQUEST)
+                            status=status.HTTP_400_BAD_REQUEST)
 
         try:
             # Map test card numbers to predefined test payment methods
@@ -196,6 +264,14 @@ class PaymentViewSet(viewsets.ModelViewSet):
                     payement='unpaid'
                 ).update(payement='paid')
 
+                # Clear cache after successful payment
+                user_id = request.user.id
+                SimpleCacheManager.delete_cache('payments_list', user_id)
+                SimpleCacheManager.delete_cache('factures_list', user_id)
+                SimpleCacheManager.delete_cache('facture_stats')
+                logger.info(
+                    f"Cache cleared after successful card payment: {payment.id}")
+
                 logger.info(
                     f"Payment succeeded for facture {facture.id}. Marked {paid_count} products as paid"
                 )
@@ -218,11 +294,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
         except stripe.error.CardError as e:
             logger.error("Stripe card error in process_card_payment: %s", e)
             return Response({'error': f'Card error: {e.user_message}'},
-                status=status.HTTP_400_BAD_REQUEST)
+                            status=status.HTTP_400_BAD_REQUEST)
         except stripe.error.StripeError as e:
             logger.error("Stripe error in process_card_payment: %s", e)
             return Response({'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST)
+                            status=status.HTTP_400_BAD_REQUEST)
 
     @action(
         detail=False,
@@ -239,7 +315,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         client_secret = request.data.get('client_secret')
         payment_intent_id = request.data.get('payment_intent_id')
         payment_method_id = request.data.get('payment_method_id')
-        
+
         # Web/desktop card details
         card_number = request.data.get('card_number')
         exp_month = request.data.get('exp_month')
@@ -285,9 +361,11 @@ class PaymentViewSet(viewsets.ModelViewSet):
                     '3566002020360505': 'pm_card_jcb',
                     '6200000000000005': 'pm_card_unionpay',
                 }
-                
-                payment_method_id = test_payment_methods.get(card_number, 'pm_card_visa')
-                logger.info(f"Using payment method {payment_method_id} for card {card_number[:4]}****")
+
+                payment_method_id = test_payment_methods.get(
+                    card_number, 'pm_card_visa')
+                logger.info(
+                    f"Using payment method {payment_method_id} for card {card_number[:4]}****")
 
             # If it requires confirmation, try to confirm it
             if intent.status == 'requires_confirmation':
@@ -324,6 +402,14 @@ class PaymentViewSet(viewsets.ModelViewSet):
             paid_count = facture.products.filter(
                 payement='unpaid'
             ).update(payement='paid')
+
+            # Clear cache after successful payment confirmation
+            user_id = request.user.id
+            SimpleCacheManager.delete_cache('payments_list', user_id)
+            SimpleCacheManager.delete_cache('factures_list', user_id)
+            SimpleCacheManager.delete_cache('facture_stats')
+            logger.info(
+                f"Cache cleared after payment confirmation: {payment.id}")
 
             logger.info(
                 f"Marked {paid_count} products as paid on facture {facture.id}"

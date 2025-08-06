@@ -10,7 +10,41 @@ from .serializers import NotificationSerializer
 import logging
 import re
 
+# Cache imports
+from django.core.cache import cache
+import hashlib
+import json
+
 logger = logging.getLogger(__name__)
+
+# Simple cache manager (inline to avoid import issues)
+
+
+class SimpleCacheManager:
+    @staticmethod
+    def generate_cache_key(prefix, *args, **kwargs):
+        key_parts = [prefix]
+        key_parts.extend([str(arg) for arg in args])
+        if kwargs:
+            sorted_kwargs = sorted(kwargs.items())
+            kwargs_str = json.dumps(sorted_kwargs, sort_keys=True)
+            key_parts.append(hashlib.md5(kwargs_str.encode()).hexdigest()[:8])
+        return ':'.join(key_parts)
+
+    @staticmethod
+    def get_cache(prefix, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.get(key)
+
+    @staticmethod
+    def set_cache(prefix, data, timeout, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.set(key, data, timeout)
+
+    @staticmethod
+    def delete_cache(prefix, *args, **kwargs):
+        key = SimpleCacheManager.generate_cache_key(prefix, *args, **kwargs)
+        return cache.delete(key)
 
 
 class NotificationPagination(PageNumberPagination):
@@ -27,6 +61,20 @@ class NotificationListView(APIView):
     def get(self, request):
         try:
             user = request.user
+            user_id = user.id
+
+            # Create cache key for notifications
+            page = request.query_params.get('page', 1)
+            page_size = request.query_params.get('page_size', 20)
+
+            # Try cache first
+            cached_result = SimpleCacheManager.get_cache(
+                'notifications_list', user_id, page, page_size)
+            if cached_result:
+                logger.info(
+                    f"Cache hit for notifications: user {user_id}, page {page}")
+                return Response(cached_result)
+
             notifications = Notification.objects.filter(user=user)
 
             # Apply pagination
@@ -37,7 +85,16 @@ class NotificationListView(APIView):
             serializer = NotificationSerializer(
                 paginated_notifications, many=True)
 
-            return paginator.get_paginated_response(serializer.data)
+            response_data = paginator.get_paginated_response(
+                serializer.data).data
+
+            # Cache for 2 minutes (notifications change frequently)
+            SimpleCacheManager.set_cache(
+                'notifications_list', response_data, 120, user_id, page, page_size)
+            logger.info(
+                f"Cache set for notifications: user {user_id}, page {page}")
+
+            return Response(response_data)
 
         except Exception as e:
             logger.error(f"Error getting notifications: {str(e)}")
@@ -54,10 +111,24 @@ class UnreadCountView(APIView):
     def get(self, request):
         try:
             user = request.user
+            user_id = user.id
+
+            # Try cache first
+            cached_count = SimpleCacheManager.get_cache(
+                'notifications_unread_count', user_id)
+            if cached_count is not None:
+                logger.info(f"Cache hit for unread count: user {user_id}")
+                return Response({'count': cached_count}, status=status.HTTP_200_OK)
+
             unread_count = Notification.objects.filter(
                 user=user,
                 is_read=False
             ).count()
+
+            # Cache for 1 minute (frequently changing)
+            SimpleCacheManager.set_cache(
+                'notifications_unread_count', unread_count, 60, user_id)
+            logger.info(f"Cache set for unread count: user {user_id}")
 
             return Response({
                 'count': unread_count
@@ -86,6 +157,19 @@ class MarkAsReadView(APIView):
             )
 
             notification.mark_as_read()
+
+            # Clear cache after marking as read
+            user_id = user.id
+            SimpleCacheManager.delete_cache(
+                'notifications_unread_count', user_id)
+            # Clear all pages of notifications cache for this user
+            for page in range(1, 10):  # Clear first 10 pages
+                for page_size in [20, 50, 100]:
+                    SimpleCacheManager.delete_cache(
+                        'notifications_list', user_id, page, page_size)
+
+            logger.info(
+                f"Cache cleared after marking notification as read: {notification_id}")
 
             return Response({
                 'detail': 'Notification marked as read',
@@ -121,6 +205,19 @@ class MarkAllAsReadView(APIView):
                 read_at=timezone.now()
             )
 
+            # Clear cache after marking all as read
+            user_id = user.id
+            SimpleCacheManager.delete_cache(
+                'notifications_unread_count', user_id)
+            # Clear all pages of notifications cache for this user
+            for page in range(1, 10):  # Clear first 10 pages
+                for page_size in [20, 50, 100]:
+                    SimpleCacheManager.delete_cache(
+                        'notifications_list', user_id, page, page_size)
+
+            logger.info(
+                f"Cache cleared after marking all notifications as read for user: {user_id}")
+
             return Response({
                 'detail': 'All notifications marked as read',
                 'updated_count': updated_count
@@ -155,8 +252,8 @@ class TestPushNotificationView(APIView):
                 'token_length': len(user.fcm_token) if user.fcm_token else 0,
                 'token_valid': token_info['is_valid'],
                 'token_errors': token_info['errors'],
-                'notifications_enabled': user.notifications_enabled,
-                'is_active': user.isActive,
+                'notifications_enabled': getattr(user, 'notifications_enabled', True),
+                'is_active': getattr(user, 'isActive', True),
                 'token_preview': user.fcm_token[:20] + '...' if user.fcm_token and len(user.fcm_token) > 20 else user.fcm_token
             }, status=status.HTTP_400_BAD_REQUEST)
 
@@ -191,13 +288,26 @@ class TestPushNotificationView(APIView):
             response = messaging.send(message)
 
             # Create notification record
-            Notification.objects.create(
+            notification = Notification.objects.create(
                 user=user,
                 title=title,
                 body=body,
                 type='test',
                 data=notification_data
             )
+
+            # Clear cache after creating notification
+            user_id = user.id
+            SimpleCacheManager.delete_cache(
+                'notifications_unread_count', user_id)
+            # Clear notifications list cache
+            for page in range(1, 5):  # Clear first 5 pages
+                for page_size in [20, 50, 100]:
+                    SimpleCacheManager.delete_cache(
+                        'notifications_list', user_id, page, page_size)
+
+            logger.info(
+                f"Cache cleared after creating test notification for user: {user_id}")
 
             return Response({
                 'detail': 'Test notification sent successfully',
@@ -277,7 +387,18 @@ class UpdateFcmTokenView(APIView):
 
         try:
             user.update_fcm_token(token)
-            logger.info(f"FCM token updated for user {user.id}")
+
+            # Clear notification-related cache for this user
+            user_id = user.id
+            SimpleCacheManager.delete_cache(
+                'notifications_unread_count', user_id)
+            for page in range(1, 5):
+                for page_size in [20, 50, 100]:
+                    SimpleCacheManager.delete_cache(
+                        'notifications_list', user_id, page, page_size)
+
+            logger.info(
+                f"FCM token updated and cache cleared for user {user.id}")
 
             return Response({
                 'detail': 'FCM token updated successfully.',
@@ -332,14 +453,14 @@ class DebugFcmTokenView(APIView):
 
     def get(self, request):
         user = request.user
-        token = user.fcm_token
+        token = getattr(user, 'fcm_token', None)
 
         debug_info = {
             'user_id': user.id,
             'has_token': bool(token),
             'token_length': len(token) if token else 0,
             'token_preview': token[:30] + '...' if token and len(token) > 30 else token,
-            'can_receive_notifications': user.can_receive_notifications(),
+            'can_receive_notifications': hasattr(user, 'can_receive_notifications') and user.can_receive_notifications(),
             'notifications_enabled': getattr(user, 'notifications_enabled', None),
             'is_active': getattr(user, 'isActive', None),
         }

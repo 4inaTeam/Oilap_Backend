@@ -245,6 +245,35 @@ class FactureViewSet(viewsets.ModelViewSet):
 
         return response
 
+    def update(self, request, *args, **kwargs):
+        """Override update method"""
+        response = super().update(request, *args, **kwargs)
+
+        if response.status_code == 200:
+            facture_id = kwargs.get('pk')
+            logger.info(f"Facture {facture_id} updated successfully")
+
+        return response
+
+    def destroy(self, request, *args, **kwargs):
+        """Override destroy method"""
+        facture_id = kwargs.get('pk')
+        try:
+            facture = Facture.objects.get(id=facture_id)
+            client_id = facture.client.id if facture.client else None
+            facture_number = facture.facture_number
+        except Facture.DoesNotExist:
+            client_id = None
+            facture_number = "Unknown"
+
+        response = super().destroy(request, *args, **kwargs)
+
+        if response.status_code == 204:
+            logger.info(
+                f"Facture {facture_number} (ID: {facture_id}) deleted successfully")
+
+        return response
+
     @action(detail=False, methods=['get'])
     def statistics(self, request):
         """Get facture statistics with filtering support"""
@@ -288,6 +317,7 @@ class FactureViewSet(viewsets.ModelViewSet):
                 'filters_applied': dict(request.query_params)
             }
 
+            logger.info(f"Statistics calculated for user {user.id}")
             return Response(stats)
 
         except Exception as e:
@@ -317,6 +347,7 @@ class FactureViewSet(viewsets.ModelViewSet):
                 count = queryset.filter(payment_status=status_choice).count()
                 status_counts[status_choice] = count
 
+            logger.info(f"Status breakdown calculated for user {user.id}")
             return Response(status_counts)
 
         except Exception as e:
@@ -453,7 +484,7 @@ class FactureViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error in download_pdf: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': f'Internal server error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'])
     def regenerate_pdf(self, request, pk=None):

@@ -433,13 +433,51 @@ LOGGING = {
     },
 }
 
-# Cache Configuration
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 20,
+                'retry_on_timeout': True,
+            },
+            'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+            'IGNORE_EXCEPTIONS': True,  # Don't break if Redis is down
+            'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+        },
+        'KEY_PREFIX': 'oilap',
+        'VERSION': 1,
+        'TIMEOUT': 300,  # Default timeout: 5 minutes
+    },
+    # Separate cache for sessions (optional)
+    'sessions': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/2'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 10,
+                'retry_on_timeout': True,
+            },
+        },
+        'KEY_PREFIX': 'oilap_session',
+        'TIMEOUT': 86400,  # 24 hours for sessions
     }
 }
+
+# Cache Configuration
+CACHE_TTL = {
+    'SHORT': 300,      # 5 minutes
+    'MEDIUM': 900,     # 15 minutes
+    'LONG': 3600,      # 1 hour
+    'VERY_LONG': 86400, # 24 hours
+}
+
+# Use Redis for sessions (optional)
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'sessions'
 
 # Production Security Headers
 if not DEBUG:
