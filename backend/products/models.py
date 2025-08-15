@@ -42,6 +42,13 @@ class Product(models.Model):
         'mauvaise': 0.15,
     }
 
+    WASTE_COEFFICIENTS = {
+        'excellente': 0.82,
+        'bonne': 0.835,
+        'moyenne': 0.85,
+        'mauvaise': 0.875,
+    }
+
     quality = models.CharField(
         max_length=10, choices=QUALITY_CHOICES, default='moyenne'
     )
@@ -50,13 +57,42 @@ class Product(models.Model):
     quantity = models.PositiveIntegerField(
         default=1, help_text="Quantity in kg")
 
-    # New field to store calculated olive oil volume
     olive_oil_volume = models.DecimalField(
         max_digits=10,
         decimal_places=3,
         null=True,
         blank=True,
         help_text="Calculated olive oil volume in liters"
+    )
+
+    total_waste_kg = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Total waste in kg"
+    )
+
+    waste_vendus_kg = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        default=0,
+        help_text="Sold waste in kg"
+    )
+
+    waste_non_vendus_kg = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Unsold waste in kg"
+    )
+
+    waste_vendus_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        help_text="Revenue from sold waste in DT"
     )
 
     payement = models.CharField(
@@ -101,6 +137,39 @@ class Product(models.Model):
         yield_per_kg = self.OLIVE_OIL_YIELD_MAP.get(self.quality, 0.17)
         return yield_per_kg * 100
 
+    def calculate_total_waste(self):
+        """Calculate total waste based on olive quality and quantity"""
+        waste_coefficient = self.WASTE_COEFFICIENTS.get(self.quality, 0.85)
+        return self.quantity * waste_coefficient
+
+    def calculate_waste_non_vendus(self):
+        """Calculate unsold waste"""
+        if self.total_waste_kg:
+            return self.total_waste_kg - self.waste_vendus_kg
+        return 0
+
+    def get_waste_percentage(self):
+        """Get waste percentage from total olives"""
+        if self.quantity > 0 and self.total_waste_kg:
+            return (self.total_waste_kg / self.quantity) * 100
+        return 0
+
+    def get_waste_vendus_percentage(self):
+        """Get percentage of sold waste"""
+        if self.total_waste_kg and self.total_waste_kg > 0:
+            return (self.waste_vendus_kg / self.total_waste_kg) * 100
+        return 0
+
+    def sell_waste(self, quantity_sold, price_per_kg):
+        """Mark some waste as sold"""
+        if self.waste_vendus_kg + quantity_sold <= self.total_waste_kg:
+            self.waste_vendus_kg += quantity_sold
+            self.waste_vendus_price += quantity_sold * price_per_kg
+            self.waste_non_vendus_kg = self.calculate_waste_non_vendus()
+            self.save()
+            return True
+        return False
+
     def save(self, *args, **kwargs):
         """Calculate price, olive oil volume, and end_time"""
         logger.info(
@@ -114,6 +183,10 @@ class Product(models.Model):
         # Calculate olive oil volume
         self.olive_oil_volume = self.calculate_olive_oil_volume()
 
+        # Calculate waste amounts
+        self.total_waste_kg = self.calculate_total_waste()
+        self.waste_non_vendus_kg = self.calculate_waste_non_vendus()
+
         # Calculate end_time if not set
         if not self.end_time:
             start_time = self.created_at if self.created_at else timezone.now()
@@ -124,6 +197,7 @@ class Product(models.Model):
         logger.info(
             f"Product save - Quality: {self.quality}, Price: {self.price}, "
             f"Quantity: {self.quantity}kg, Olive Oil Volume: {self.olive_oil_volume}L"
+            f"Total Waste: {self.total_waste_kg}kg, Vendus: {self.waste_vendus_kg}kg, Non Vendus: {self.waste_non_vendus_kg}kg"
         )
 
         super().save(*args, **kwargs)

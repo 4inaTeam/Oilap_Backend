@@ -67,7 +67,6 @@ class ProductCacheManager:
     @staticmethod
     def clear_user_related_cache(user_id):
         """Clear all cache entries related to a specific user"""
-        # This is a simplified approach - in production, you might want to use cache patterns
         keys_to_delete = [
             f'products_list_{user_id}',
             f'client_products_{user_id}',
@@ -85,6 +84,7 @@ class ProductCacheManager:
         cache_keys = [
             'product_stats',
             'total_quantity', 
+            'total_quantity_with_waste',
             'origin_percentages',
             'products_list',
             'client_products'
@@ -1138,16 +1138,16 @@ class ProductStatsView(APIView):
 
 class TotalQuantityView(APIView):
     """
-    Get total quantity of olives and sum of oil produced
+    Get total quantity of olives, oil produced, and waste statistics (vendus/non vendus)
     """
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def get(self, request):
         try:
-            # Check cache first
-            cached_quantity = ProductCacheManager.get_cache('total_quantity')
+            # Check cache first - mise à jour de la clé de cache pour inclure les déchets
+            cached_quantity = ProductCacheManager.get_cache('total_quantity_with_waste')
             if cached_quantity:
-                logger.info("Cache hit for total quantity")
+                logger.info("Cache hit for total quantity with waste")
                 return Response(cached_quantity)
 
             # First, let's check if there are any products
@@ -1159,10 +1159,18 @@ class TotalQuantityView(APIView):
                     'total_quantity': 0,
                     'total_oil_volume': 0,
                     'overall_yield_percentage': 0,
+                    'waste_summary': {
+                        'total_waste_kg': 0,
+                        'waste_vendus_kg': 0,
+                        'waste_non_vendus_kg': 0,
+                        'waste_vendus_price': 0,
+                        'vendus_percentage': 0,
+                        'non_vendus_percentage': 0
+                    },
                     'message': 'No products found'
                 }
                 # Cache empty result for shorter time
-                ProductCacheManager.set_cache('total_quantity', empty_result, 60)
+                ProductCacheManager.set_cache('total_quantity_with_waste', empty_result, 60)
                 return Response(empty_result, status=status.HTTP_200_OK)
 
             # Calculate total quantity of olives across all products
@@ -1192,17 +1200,32 @@ class TotalQuantityView(APIView):
                 )
                 manual_oil_calculation += product.quantity * yield_rate
 
-            total_oil_volume = float(total_oil_from_db) + \
-                manual_oil_calculation
+            total_oil_volume = float(total_oil_from_db) + manual_oil_calculation
             logger.info(f"Total oil volume: {total_oil_volume}")
 
             # Calculate overall average yield
             overall_yield_percentage = 0
             if total_quantity > 0:
-                overall_yield_percentage = (
-                    total_oil_volume / float(total_quantity)) * 100
+                overall_yield_percentage = (total_oil_volume / float(total_quantity)) * 100
 
-            # Get basic breakdown by status
+            # NOUVEAU : Calculate waste statistics
+            waste_stats = Product.objects.aggregate(
+                total_waste=Sum('total_waste_kg'),
+                waste_vendus=Sum('waste_vendus_kg'),
+                waste_non_vendus=Sum('waste_non_vendus_kg'),
+                waste_revenue=Sum('waste_vendus_price')
+            )
+
+            total_waste = float(waste_stats['total_waste'] or 0)
+            waste_vendus = float(waste_stats['waste_vendus'] or 0)
+            waste_non_vendus = float(waste_stats['waste_non_vendus'] or 0)
+            waste_revenue = float(waste_stats['waste_revenue'] or 0)
+
+            # Calculate waste percentages
+            vendus_percentage = (waste_vendus / total_waste * 100) if total_waste > 0 else 0
+            non_vendus_percentage = (waste_non_vendus / total_waste * 100) if total_waste > 0 else 0
+
+            # Get basic breakdown by status (existant)
             quantity_by_status = {}
 
             status_choices = getattr(Product, 'STATUS_CHOICES', [
@@ -1240,9 +1263,42 @@ class TotalQuantityView(APIView):
 
                 status_oil = float(status_oil_from_db) + status_manual_oil
 
+                # NOUVEAU : Add waste stats by status
+                status_waste_stats = status_products.aggregate(
+                    total_waste=Sum('total_waste_kg'),
+                    vendus=Sum('waste_vendus_kg'),
+                    non_vendus=Sum('waste_non_vendus_kg'),
+                    revenue=Sum('waste_vendus_price')
+                )
+
                 quantity_by_status[status_key] = {
                     'total_quantity': float(status_quantity),
-                    'total_oil': float(status_oil)
+                    'total_oil': float(status_oil),
+                    'waste_stats': {
+                        'total_waste_kg': float(status_waste_stats['total_waste'] or 0),
+                        'waste_vendus_kg': float(status_waste_stats['vendus'] or 0),
+                        'waste_non_vendus_kg': float(status_waste_stats['non_vendus'] or 0),
+                        'waste_revenue_dt': float(status_waste_stats['revenue'] or 0)
+                    }
+                }
+
+            # NOUVEAU : Add waste breakdown by quality
+            waste_by_quality = {}
+            for quality, _ in Product.QUALITY_CHOICES:
+                quality_waste = Product.objects.filter(quality=quality).aggregate(
+                    total_waste=Sum('total_waste_kg'),
+                    vendus=Sum('waste_vendus_kg'),
+                    non_vendus=Sum('waste_non_vendus_kg'),
+                    revenue=Sum('waste_vendus_price'),
+                    product_count=Count('id')
+                )
+                
+                waste_by_quality[quality] = {
+                    'product_count': quality_waste['product_count'] or 0,
+                    'total_waste_kg': float(quality_waste['total_waste'] or 0),
+                    'waste_vendus_kg': float(quality_waste['vendus'] or 0),
+                    'waste_non_vendus_kg': float(quality_waste['non_vendus'] or 0),
+                    'waste_revenue_dt': float(quality_waste['revenue'] or 0)
                 }
 
             quantity_data = {
@@ -1250,12 +1306,26 @@ class TotalQuantityView(APIView):
                 'total_oil_volume': float(total_oil_volume),
                 'overall_yield_percentage': round(overall_yield_percentage, 2),
                 'quantity_by_status': quantity_by_status,
-                'total_products': total_products
+                'total_products': total_products,
+                
+                # NOUVEAU : Waste summary
+                'waste_summary': {
+                    'total_waste_kg': round(total_waste, 3),
+                    'waste_vendus_kg': round(waste_vendus, 3),
+                    'waste_non_vendus_kg': round(waste_non_vendus, 3),
+                    'waste_vendus_price_dt': round(waste_revenue, 2),
+                    'vendus_percentage': round(vendus_percentage, 2),
+                    'non_vendus_percentage': round(non_vendus_percentage, 2),
+                    'average_price_per_kg': round(waste_revenue / waste_vendus, 3) if waste_vendus > 0 else 0
+                },
+                
+                # NOUVEAU : Waste breakdown by quality
+                'waste_by_quality': waste_by_quality
             }
 
-            # Cache for 15 minutes
-            ProductCacheManager.set_cache('total_quantity', quantity_data, 900)
-            logger.info("Cache set for total quantity")
+            # Cache for 15 minutes - update cache key
+            ProductCacheManager.set_cache('total_quantity_with_waste', quantity_data, 900)
+            logger.info("Cache set for total quantity with waste")
 
             return Response(quantity_data, status=status.HTTP_200_OK)
 
@@ -1263,11 +1333,11 @@ class TotalQuantityView(APIView):
             import traceback
             error_details = traceback.format_exc()
             logger.error(
-                f"Error getting total quantity and oil volume: {str(e)}")
+                f"Error getting total quantity, oil volume, and waste stats: {str(e)}")
             logger.error(f"Full traceback: {error_details}")
 
             error_response = {
-                'error': 'Failed to get total quantity and oil volume',
+                'error': 'Failed to get total quantity, oil volume, and waste statistics',
                 'error_type': type(e).__name__,
                 'details': str(e)
             }
@@ -1279,7 +1349,6 @@ class TotalQuantityView(APIView):
                 error_response,
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
 
 class OriginPercentageView(APIView):
     """

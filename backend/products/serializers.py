@@ -38,22 +38,43 @@ class ProductSerializer(serializers.ModelSerializer):
     # Display oil efficiency percentage as read-only
     oil_efficiency_percentage = serializers.SerializerMethodField()
 
+    total_waste_kg = serializers.DecimalField(
+        max_digits=10, decimal_places=3, read_only=True)
+    waste_vendus_kg = serializers.DecimalField(
+        max_digits=10, decimal_places=3, read_only=True)
+    waste_non_vendus_kg = serializers.DecimalField(
+        max_digits=10, decimal_places=3, read_only=True)
+    waste_vendus_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True)
+    waste_percentage = serializers.SerializerMethodField()
+    waste_vendus_percentage = serializers.SerializerMethodField()
+
     class Meta:
         model = Product
         fields = [
             'id', 'quality', 'origine', 'price',
             'quantity', 'olive_oil_volume', 'oil_efficiency_percentage',
+            'total_waste_kg', 'waste_vendus_kg', 'waste_non_vendus_kg',
+            'waste_vendus_price', 'waste_percentage', 'waste_vendus_percentage',
             'client', 'client_name', 'status', 'created_by',
             'created_at', 'estimation_time', 'end_time', 'payement'
         ]
         read_only_fields = [
             'created_by', 'created_at', 'client_name', 'end_time',
-            'olive_oil_volume', 'oil_efficiency_percentage'
+            'olive_oil_volume', 'oil_efficiency_percentage',
+            'total_waste_kg', 'waste_vendus_kg', 'waste_non_vendus_kg',
+            'waste_vendus_price', 'waste_percentage', 'waste_vendus_percentage'
         ]
 
     def get_oil_efficiency_percentage(self, obj):
         """Get the oil extraction efficiency as a percentage"""
         return obj.get_oil_efficiency_percentage()
+
+    def get_waste_percentage(self, obj):
+        return obj.get_waste_percentage()
+
+    def get_waste_vendus_percentage(self, obj):
+        return obj.get_waste_vendus_percentage()
 
     def validate_client(self, value):
         if value.role != 'CLIENT':
