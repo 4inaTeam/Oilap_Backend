@@ -8,6 +8,7 @@ from .views import (
     UserProfileView,
     SearchClientByCIN,
     UserDeactivateView,
+    UserReactivateView,
     UserDeleteView,
     ClientUpdateView,
     SearchUserByCIN,
@@ -32,6 +33,8 @@ urlpatterns = [
          SearchUserByCIN.as_view(), name='search-client'),
     path('deactivate/<int:user_id>/',
          UserDeactivateView.as_view(), name='user-deactivate'),
+    path('reactivate/<int:user_id>/',
+         UserReactivateView.as_view(), name='user-reactivate'),
     path('get/<int:user_id>/', GetUserById.as_view(), name='get-user-by-id'),
 
     path('total-clients/', TotalClientsView.as_view(), name='total-clients'),

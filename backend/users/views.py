@@ -400,3 +400,47 @@ class TotalClientsView(APIView):
         logger.info("Cache set for total clients count")
 
         return Response({"total_clients": total_clients})
+
+
+class UserReactivateView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+
+    def patch(self, request, user_id):
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if user is a client
+        if user.role != 'CLIENT':
+            return Response(
+                {'error': 'Only client accounts can be reactivated through this endpoint.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if user is already active
+        if user.isActive:
+            return Response(
+                {'message': 'Client is already active.'},
+                status=status.HTTP_200_OK
+            )
+
+        # Reactivate the user
+        user.isActive = True
+        user.save()
+
+        # Clear cache after reactivation
+        SimpleCacheManager.delete_cache('user_profile', user_id)
+        SimpleCacheManager.delete_cache('user_by_id', user_id)
+        SimpleCacheManager.delete_cache('users_list', 'all')
+        SimpleCacheManager.delete_cache('total_clients')
+        if hasattr(user, 'cin'):
+            SimpleCacheManager.delete_cache('user_by_cin', user.cin)
+            SimpleCacheManager.delete_cache('client_by_cin', user.cin)
+        logger.info(f"Cache cleared after user reactivation: {user_id}")
+
+        serializer = UserActiveStatusSerializer(user)
+        return Response({
+            'message': 'Client reactivated successfully.',
+            'user': serializer.data
+        }, status=status.HTTP_200_OK)
