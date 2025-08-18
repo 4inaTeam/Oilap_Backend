@@ -115,13 +115,53 @@ class UserListView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def get(self, request):
-        # Try cache first
-        cached_users = SimpleCacheManager.get_cache('users_list', 'all')
+        # Get query parameters
+        role_filter = request.query_params.get('role', None)
+        cin_search = request.query_params.get('cin', None)
+        name_search = request.query_params.get('name', None)
+        
+        # Create cache key based on filters
+        cache_params = {}
+        if role_filter:
+            cache_params['role'] = role_filter
+        if cin_search:
+            cache_params['cin'] = cin_search
+        if name_search:
+            cache_params['name'] = name_search
+            
+        # Try cache first with filter parameters
+        cache_key_suffix = 'all' if not cache_params else str(sorted(cache_params.items()))
+        cached_users = SimpleCacheManager.get_cache('users_list', cache_key_suffix)
         if cached_users:
-            logger.info("Cache hit for user list")
+            logger.info(f"Cache hit for user list with filters: {cache_params}")
             return Response(cached_users)
 
-        users = CustomUser.objects.all()
+        # Start with all users
+        users_queryset = CustomUser.objects.all()
+        
+        # Apply role filter if provided
+        if role_filter:
+            # Validate role filter
+            valid_roles = ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT', 'CLIENT']
+            if role_filter.upper() in valid_roles:
+                users_queryset = users_queryset.filter(role=role_filter.upper())
+            else:
+                return Response(
+                    {"error": f"Invalid role. Valid roles are: {', '.join(valid_roles)}"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Apply CIN search if provided
+        if cin_search:
+            users_queryset = users_queryset.filter(cin__icontains=cin_search)
+            
+        # Apply name search if provided  
+        if name_search:
+            users_queryset = users_queryset.filter(username__icontains=name_search)
+
+        # Get the filtered users
+        users = users_queryset.order_by('-id')  # Order by newest first
+        
         data = [
             {
                 "id": user.id,
@@ -132,15 +172,74 @@ class UserListView(APIView):
                 "tel": user.tel,
                 "profile_photo": user.profile_photo.url if user.profile_photo else None,
                 "isActive": user.isActive,
-                "ville": user.ville  # Added ville field
+                "ville": user.ville
             } for user in users
         ]
 
-        # Cache for 10 minutes
-        SimpleCacheManager.set_cache('users_list', data, 600, 'all')
-        logger.info("Cache set for user list")
+        # Cache for 10 minutes with filter-specific key
+        SimpleCacheManager.set_cache('users_list', data, 600, cache_key_suffix)
+        logger.info(f"Cache set for user list with filters: {cache_params}")
 
         return Response(data)
+
+    def post(self, request):
+        """
+        Optional: Add a POST method for more complex search queries
+        """
+        # Get search criteria from request body
+        search_criteria = request.data
+        
+        role_filter = search_criteria.get('role', None)
+        cin_search = search_criteria.get('cin', None)
+        name_search = search_criteria.get('name', None)
+        is_active = search_criteria.get('isActive', None)
+        ville_filter = search_criteria.get('ville', None)
+        
+        # Start with all users
+        users_queryset = CustomUser.objects.all()
+        
+        # Apply filters
+        if role_filter:
+            valid_roles = ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT', 'CLIENT']
+            if role_filter.upper() in valid_roles:
+                users_queryset = users_queryset.filter(role=role_filter.upper())
+            else:
+                return Response(
+                    {"error": f"Invalid role. Valid roles are: {', '.join(valid_roles)}"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        if cin_search:
+            users_queryset = users_queryset.filter(cin__icontains=cin_search)
+            
+        if name_search:
+            users_queryset = users_queryset.filter(username__icontains=name_search)
+            
+        if is_active is not None:
+            users_queryset = users_queryset.filter(isActive=is_active)
+            
+        if ville_filter:
+            users_queryset = users_queryset.filter(ville__icontains=ville_filter)
+
+        # Get the filtered users
+        users = users_queryset.order_by('-id')
+        
+        data = [
+            {
+                "id": user.id,
+                "name": user.username,
+                "cin": user.cin,
+                "email": user.email,
+                "role": user.role,
+                "tel": user.tel,
+                "profile_photo": user.profile_photo.url if user.profile_photo else None,
+                "isActive": user.isActive,
+                "ville": user.ville
+            } for user in users
+        ]
+
+        return Response(data)
+
 
 
 class UserDeleteView(generics.DestroyAPIView):
