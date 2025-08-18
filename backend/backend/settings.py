@@ -55,7 +55,6 @@ ALLOWED_HOSTS = [
     'oilap-backend-1.onrender.com',
 ]
 
-# Add Render hostname if available
 if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
@@ -216,20 +215,17 @@ RATE_LIMIT_SENSITIVE_ENDPOINTS = [
     '/api/users/clients/create/',
 ]
 
-# Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
 
-# Password Reset Configuration
 REST_PASSWORDRESET = {
     'TOKEN_EXPIRY_TIME_HOURS': 0,
     'TOKEN_EXPIRY_TIME_MINUTES': 15,
 }
 
-# Email Configuration
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
@@ -237,7 +233,6 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 
-# Static files configuration
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
@@ -245,19 +240,14 @@ STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'templates'),
 ]
 
-# 🔧 CRITICAL FIX: Media files configuration with forced production URLs
 if os.environ.get('RENDER'):
-    # Production on Render
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Changed from 'user_uploads'
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  
 
-    # 🔧 FIX: Force production URL for media
     if RENDER_EXTERNAL_HOSTNAME:
         MEDIA_URL = f'https://{RENDER_EXTERNAL_HOSTNAME}/uploads/'
     else:
-        # Fallback to your known production domain
         MEDIA_URL = 'https://oilap-backend-1.onrender.com/uploads/'
 
-    # Check if Cloudinary is properly configured
     cloudinary_configured = all([
         os.getenv('CLOUDINARY_CLOUD_NAME'),
         os.getenv('CLOUDINARY_API_KEY'),
@@ -270,38 +260,32 @@ if os.environ.get('RENDER'):
         DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
 else:
-    # Development
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  # Changed from 'user_uploads'
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media') 
     MEDIA_URL = '/uploads/'
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
-# Ensure media directory exists
+
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 
-# 🔧 NEW: Add settings to force absolute URLs in production
 USE_ABSOLUTE_URLS = os.environ.get('RENDER', False)
 PRODUCTION_DOMAIN = 'https://oilap-backend-1.onrender.com'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Internationalization
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Stripe Configuration
 STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY')
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
 
-# Twilio Configuration
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
 TWILIO_ENABLED = os.getenv('TWILIO_ENABLED', 'False') == 'True'
 
-# Tesseract OCR Configuration (only for local development)
 if not os.environ.get('RENDER'):
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
     os.environ['TESSDATA_PREFIX'] = r'C:\Program Files\Tesseract-OCR\tessdata'
@@ -310,10 +294,8 @@ CONFIDENCE_THRESHOLD = 0.7
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = ('png', 'jpg', 'jpeg')
 
-# 🔧 FIX: CORS Configuration for production
-CORS_ALLOW_ALL_ORIGINS = True  # For development/testing
+CORS_ALLOW_ALL_ORIGINS = True 
 
-# Add your production domain to allowed origins
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -354,13 +336,11 @@ CLOUDINARY_STORAGE = {
     'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
 }
 
-# File Storage Configuration - Use Cloudinary for new uploads, but support both
 if os.environ.get('RENDER') and all([os.getenv('CLOUDINARY_CLOUD_NAME'), os.getenv('CLOUDINARY_API_KEY'), os.getenv('CLOUDINARY_API_SECRET')]):
     DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 else:
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
-# Enhanced Logging Configuration with Bills debugging
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -444,14 +424,13 @@ CACHES = {
                 'retry_on_timeout': True,
             },
             'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
-            'IGNORE_EXCEPTIONS': True,  # Don't break if Redis is down
+            'IGNORE_EXCEPTIONS': True,
             'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
         },
         'KEY_PREFIX': 'oilap',
         'VERSION': 1,
-        'TIMEOUT': 300,  # Default timeout: 5 minutes
+        'TIMEOUT': 300,
     },
-    # Separate cache for sessions (optional)
     'sessions': {
         'BACKEND': 'django_redis.cache.RedisCache',
         'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/2'),
@@ -463,7 +442,7 @@ CACHES = {
             },
         },
         'KEY_PREFIX': 'oilap_session',
-        'TIMEOUT': 86400,  # 24 hours for sessions
+        'TIMEOUT': 86400,
     }
 }
 
@@ -472,7 +451,7 @@ CACHE_TTL = {
     'SHORT': 300,      # 5 minutes
     'MEDIUM': 900,     # 15 minutes
     'LONG': 3600,      # 1 hour
-    'VERY_LONG': 86400, # 24 hours
+    'VERY_LONG': 86400,  # 24 hours
 }
 
 # Use Redis for sessions (optional)

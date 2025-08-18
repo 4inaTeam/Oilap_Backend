@@ -7,6 +7,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from django.db.models import Q
 from django.conf import settings
+from decimal import Decimal
 import csv
 import io
 from reportlab.pdfgen import canvas
@@ -38,6 +39,8 @@ import json
 logger = logging.getLogger(__name__)
 
 # Simple cache manager for products
+
+
 class ProductCacheManager:
     @staticmethod
     def generate_cache_key(prefix, *args, **kwargs):
@@ -83,7 +86,7 @@ class ProductCacheManager:
         # Clear common cache keys
         cache_keys = [
             'product_stats',
-            'total_quantity', 
+            'total_quantity',
             'total_quantity_with_waste',
             'origin_percentages',
             'products_list',
@@ -105,20 +108,21 @@ class ProductCreateView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
-        
+
         if response.status_code == status.HTTP_201_CREATED:
             # Clear relevant caches after product creation
             ProductCacheManager.clear_all_product_cache()
-            
+
             # Clear user-specific caches if applicable
             product_data = response.data
             if 'client' in product_data:
                 client_id = product_data.get('client')
                 if client_id:
                     ProductCacheManager.clear_user_related_cache(client_id)
-            
-            logger.info(f"Cache cleared after product creation: {product_data.get('id')}")
-            
+
+            logger.info(
+                f"Cache cleared after product creation: {product_data.get('id')}")
+
         return response
 
 
@@ -149,21 +153,25 @@ class ProductRetrieveView(generics.RetrieveAPIView):
         """Override to add caching for individual product retrieval"""
         product_id = kwargs.get('pk')
         user_id = request.user.id
-        
+
         # Try cache first
-        cached_product = ProductCacheManager.get_cache('product_detail', product_id, user_id)
+        cached_product = ProductCacheManager.get_cache(
+            'product_detail', product_id, user_id)
         if cached_product:
-            logger.info(f"Cache hit for product detail: {product_id}, user: {user_id}")
+            logger.info(
+                f"Cache hit for product detail: {product_id}, user: {user_id}")
             return Response(cached_product)
-        
+
         # Get data using parent method
         response = super().retrieve(request, *args, **kwargs)
-        
+
         # Cache for 15 minutes if successful
         if response.status_code == 200:
-            ProductCacheManager.set_cache('product_detail', response.data, 900, product_id, user_id)
-            logger.info(f"Cache set for product detail: {product_id}, user: {user_id}")
-        
+            ProductCacheManager.set_cache(
+                'product_detail', response.data, 900, product_id, user_id)
+            logger.info(
+                f"Cache set for product detail: {product_id}, user: {user_id}")
+
         return response
 
 
@@ -222,26 +230,27 @@ class ProductUpdateView(generics.UpdateAPIView):
     def update(self, request, *args, **kwargs):
         """Override to clear cache after update"""
         response = super().update(request, *args, **kwargs)
-        
+
         if response.status_code == 200:
             product_id = kwargs.get('pk')
-            
+
             # Clear all product-related caches
             ProductCacheManager.clear_all_product_cache()
-            
+
             # Clear specific product detail cache
             ProductCacheManager.delete_cache('product_detail', product_id)
-            
+
             # Clear user-related caches
             try:
                 product = Product.objects.get(id=product_id)
                 if product.client:
-                    ProductCacheManager.clear_user_related_cache(product.client.id)
+                    ProductCacheManager.clear_user_related_cache(
+                        product.client.id)
             except Product.DoesNotExist:
                 pass
-            
+
             logger.info(f"Cache cleared after product update: {product_id}")
-            
+
         return response
 
 
@@ -263,16 +272,17 @@ class CancelProductView(generics.UpdateAPIView):
     def update(self, request, *args, **kwargs):
         """Override to clear cache after cancellation"""
         response = super().update(request, *args, **kwargs)
-        
+
         if response.status_code == 200:
             product_id = kwargs.get('pk')
-            
+
             # Clear caches after cancellation
             ProductCacheManager.clear_all_product_cache()
             ProductCacheManager.delete_cache('product_detail', product_id)
-            
-            logger.info(f"Cache cleared after product cancellation: {product_id}")
-            
+
+            logger.info(
+                f"Cache cleared after product cancellation: {product_id}")
+
         return response
 
 
@@ -283,33 +293,388 @@ class ProductListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
+
+        # Base queryset with role-based filtering
         if hasattr(user, 'role') and user.role in ['ADMIN', 'EMPLOYEE']:
-            return Product.objects.all()
-        return Product.objects.filter(client=user)
+            queryset = Product.objects.all()
+        else:
+            queryset = Product.objects.filter(client=user)
+
+        # Apply search filters based on query parameters
+        queryset = self._apply_search_filters(queryset)
+
+        return queryset.select_related('client', 'created_by').order_by('-created_at')
+
+    def _apply_search_filters(self, queryset):
+        """Apply comprehensive search filters based on query parameters"""
+
+        # General search (searches across multiple fields)
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                Q(id__icontains=search) |
+                Q(client__username__icontains=search) |
+                Q(client__cin__icontains=search) |
+                Q(client__email__icontains=search) |
+                Q(quality__icontains=search) |
+                Q(origine__icontains=search) |
+                Q(status__icontains=search) |
+                Q(payement__icontains=search) |
+                Q(created_by__username__icontains=search)
+            )
+
+        # Filter by Product ID
+        product_id = self.request.query_params.get('id', '').strip()
+        if product_id:
+            try:
+                queryset = queryset.filter(id=int(product_id))
+            except ValueError:
+                # If not a valid integer, search for products containing the string
+                queryset = queryset.filter(id__icontains=product_id)
+
+        # Filter by Quality
+        quality = self.request.query_params.get('quality', '').strip()
+        if quality:
+            queryset = queryset.filter(quality__iexact=quality)
+
+        # Filter by multiple qualities (comma-separated)
+        qualities = self.request.query_params.get('qualities', '').strip()
+        if qualities:
+            quality_list = [q.strip()
+                            for q in qualities.split(',') if q.strip()]
+            if quality_list:
+                queryset = queryset.filter(quality__in=quality_list)
+
+        # Filter by Origin
+        origine = self.request.query_params.get('origine', '').strip()
+        if origine:
+            queryset = queryset.filter(origine__icontains=origine)
+
+        # Filter by Status
+        status_filter = self.request.query_params.get('status', '').strip()
+        if status_filter:
+            queryset = queryset.filter(status__iexact=status_filter)
+
+        # Filter by multiple statuses (comma-separated)
+        statuses = self.request.query_params.get('statuses', '').strip()
+        if statuses:
+            status_list = [s.strip() for s in statuses.split(',') if s.strip()]
+            if status_list:
+                queryset = queryset.filter(status__in=status_list)
+
+        # Filter by Payment status
+        payement = self.request.query_params.get('payement', '').strip()
+        if payement:
+            queryset = queryset.filter(payement__iexact=payement)
+
+        # Filter by Client (only for admin/employee)
+        client_filter = self.request.query_params.get('client', '').strip()
+        if client_filter and self.request.user.role in ['ADMIN', 'EMPLOYEE']:
+            queryset = queryset.filter(
+                Q(client__username__icontains=client_filter) |
+                Q(client__cin__icontains=client_filter) |
+                Q(client__email__icontains=client_filter)
+            )
+
+        # Filter by Client ID (only for admin/employee)
+        client_id = self.request.query_params.get('client_id', '').strip()
+        if client_id and self.request.user.role in ['ADMIN', 'EMPLOYEE']:
+            try:
+                queryset = queryset.filter(client_id=int(client_id))
+            except ValueError:
+                pass
+
+        # Filter by Created By (only for admin/employee)
+        created_by = self.request.query_params.get('created_by', '').strip()
+        if created_by and self.request.user.role in ['ADMIN', 'EMPLOYEE']:
+            queryset = queryset.filter(
+                created_by__username__icontains=created_by)
+
+        # Price range filters
+        min_price = self.request.query_params.get('min_price', '').strip()
+        if min_price:
+            try:
+                queryset = queryset.filter(price__gte=Decimal(min_price))
+            except (ValueError, TypeError):
+                pass
+
+        max_price = self.request.query_params.get('max_price', '').strip()
+        if max_price:
+            try:
+                queryset = queryset.filter(price__lte=Decimal(max_price))
+            except (ValueError, TypeError):
+                pass
+
+        # Quantity range filters
+        min_quantity = self.request.query_params.get(
+            'min_quantity', '').strip()
+        if min_quantity:
+            try:
+                queryset = queryset.filter(quantity__gte=int(min_quantity))
+            except ValueError:
+                pass
+
+        max_quantity = self.request.query_params.get(
+            'max_quantity', '').strip()
+        if max_quantity:
+            try:
+                queryset = queryset.filter(quantity__lte=int(max_quantity))
+            except ValueError:
+                pass
+
+        # Date range filters
+        date_from = self.request.query_params.get('date_from', '').strip()
+        if date_from:
+            try:
+                from_date = timezone.datetime.strptime(
+                    date_from, '%Y-%m-%d').date()
+                queryset = queryset.filter(created_at__date__gte=from_date)
+            except ValueError:
+                # Try alternative date format
+                try:
+                    from_date = timezone.datetime.strptime(
+                        date_from, '%d/%m/%Y').date()
+                    queryset = queryset.filter(created_at__date__gte=from_date)
+                except ValueError:
+                    pass
+
+        date_to = self.request.query_params.get('date_to', '').strip()
+        if date_to:
+            try:
+                to_date = timezone.datetime.strptime(
+                    date_to, '%Y-%m-%d').date()
+                queryset = queryset.filter(created_at__date__lte=to_date)
+            except ValueError:
+                # Try alternative date format
+                try:
+                    to_date = timezone.datetime.strptime(
+                        date_to, '%d/%m/%Y').date()
+                    queryset = queryset.filter(created_at__date__lte=to_date)
+                except ValueError:
+                    pass
+
+        # End time date range filters
+        end_date_from = self.request.query_params.get(
+            'end_date_from', '').strip()
+        if end_date_from:
+            try:
+                from_date = timezone.datetime.strptime(
+                    end_date_from, '%Y-%m-%d').date()
+                queryset = queryset.filter(end_time__date__gte=from_date)
+            except ValueError:
+                try:
+                    from_date = timezone.datetime.strptime(
+                        end_date_from, '%d/%m/%Y').date()
+                    queryset = queryset.filter(end_time__date__gte=from_date)
+                except ValueError:
+                    pass
+
+        end_date_to = self.request.query_params.get('end_date_to', '').strip()
+        if end_date_to:
+            try:
+                to_date = timezone.datetime.strptime(
+                    end_date_to, '%Y-%m-%d').date()
+                queryset = queryset.filter(end_time__date__lte=to_date)
+            except ValueError:
+                try:
+                    to_date = timezone.datetime.strptime(
+                        end_date_to, '%d/%m/%Y').date()
+                    queryset = queryset.filter(end_time__date__lte=to_date)
+                except ValueError:
+                    pass
+
+        # Estimation time range filters
+        min_estimation = self.request.query_params.get(
+            'min_estimation_time', '').strip()
+        if min_estimation:
+            try:
+                queryset = queryset.filter(
+                    estimation_time__gte=int(min_estimation))
+            except ValueError:
+                pass
+
+        max_estimation = self.request.query_params.get(
+            'max_estimation_time', '').strip()
+        if max_estimation:
+            try:
+                queryset = queryset.filter(
+                    estimation_time__lte=int(max_estimation))
+            except ValueError:
+                pass
+
+        # Olive oil volume range filters
+        min_oil_volume = self.request.query_params.get(
+            'min_oil_volume', '').strip()
+        if min_oil_volume:
+            try:
+                queryset = queryset.filter(
+                    olive_oil_volume__gte=Decimal(min_oil_volume))
+            except (ValueError, TypeError):
+                pass
+
+        max_oil_volume = self.request.query_params.get(
+            'max_oil_volume', '').strip()
+        if max_oil_volume:
+            try:
+                queryset = queryset.filter(
+                    olive_oil_volume__lte=Decimal(max_oil_volume))
+            except (ValueError, TypeError):
+                pass
+
+        # Waste filters
+        min_waste = self.request.query_params.get(
+            'min_total_waste', '').strip()
+        if min_waste:
+            try:
+                queryset = queryset.filter(
+                    total_waste_kg__gte=Decimal(min_waste))
+            except (ValueError, TypeError):
+                pass
+
+        max_waste = self.request.query_params.get(
+            'max_total_waste', '').strip()
+        if max_waste:
+            try:
+                queryset = queryset.filter(
+                    total_waste_kg__lte=Decimal(max_waste))
+            except (ValueError, TypeError):
+                pass
+
+        # Waste vendus range filters
+        min_waste_vendus = self.request.query_params.get(
+            'min_waste_vendus', '').strip()
+        if min_waste_vendus:
+            try:
+                queryset = queryset.filter(
+                    waste_vendus_kg__gte=Decimal(min_waste_vendus))
+            except (ValueError, TypeError):
+                pass
+
+        max_waste_vendus = self.request.query_params.get(
+            'max_waste_vendus', '').strip()
+        if max_waste_vendus:
+            try:
+                queryset = queryset.filter(
+                    waste_vendus_kg__lte=Decimal(max_waste_vendus))
+            except (ValueError, TypeError):
+                pass
+
+        # Waste price range filters
+        min_waste_price = self.request.query_params.get(
+            'min_waste_price', '').strip()
+        if min_waste_price:
+            try:
+                queryset = queryset.filter(
+                    waste_vendus_price__gte=Decimal(min_waste_price))
+            except (ValueError, TypeError):
+                pass
+
+        max_waste_price = self.request.query_params.get(
+            'max_waste_price', '').strip()
+        if max_waste_price:
+            try:
+                queryset = queryset.filter(
+                    waste_vendus_price__lte=Decimal(max_waste_price))
+            except (ValueError, TypeError):
+                pass
+
+        # Boolean filters
+        has_waste = self.request.query_params.get('has_waste', '').strip()
+        if has_waste:
+            if has_waste.lower() in ['true', '1', 'yes']:
+                queryset = queryset.filter(total_waste_kg__gt=0)
+            elif has_waste.lower() in ['false', '0', 'no']:
+                queryset = queryset.filter(
+                    Q(total_waste_kg__isnull=True) | Q(total_waste_kg=0))
+
+        has_vendus_waste = self.request.query_params.get(
+            'has_vendus_waste', '').strip()
+        if has_vendus_waste:
+            if has_vendus_waste.lower() in ['true', '1', 'yes']:
+                queryset = queryset.filter(waste_vendus_kg__gt=0)
+            elif has_vendus_waste.lower() in ['false', '0', 'no']:
+                queryset = queryset.filter(
+                    Q(waste_vendus_kg__isnull=True) | Q(waste_vendus_kg=0))
+
+        # Ordering
+        ordering = self.request.query_params.get('ordering', '').strip()
+        if ordering:
+            valid_orderings = [
+                'id', '-id',
+                'created_at', '-created_at',
+                'end_time', '-end_time',
+                'price', '-price',
+                'quantity', '-quantity',
+                'status', '-status',
+                'quality', '-quality',
+                'estimation_time', '-estimation_time',
+                'olive_oil_volume', '-olive_oil_volume',
+                'total_waste_kg', '-total_waste_kg',
+                'waste_vendus_kg', '-waste_vendus_kg',
+                'waste_vendus_price', '-waste_vendus_price'
+            ]
+
+            # Allow ordering by client fields for admin/employee
+            if self.request.user.role in ['ADMIN', 'EMPLOYEE']:
+                valid_orderings.extend([
+                    'client__username', '-client__username',
+                    'client__cin', '-client__cin',
+                    'created_by__username', '-created_by__username'
+                ])
+
+            if ordering in valid_orderings:
+                queryset = queryset.order_by(ordering)
+
+        return queryset
 
     def list(self, request, *args, **kwargs):
-        """Override to add caching"""
+        """Override to add caching with search parameters"""
         user_id = request.user.id
         user_role = request.user.role
-        
-        # Create cache key including query parameters
+
+        # Create cache key including all query parameters
         query_params = dict(request.GET)
-        query_hash = hashlib.md5(json.dumps(query_params, sort_keys=True).encode()).hexdigest()[:8]
-        
+        query_hash = hashlib.md5(json.dumps(
+            query_params, sort_keys=True).encode()).hexdigest()[:8]
+
         # Try cache first
-        cached_result = ProductCacheManager.get_cache('products_list', user_id, user_role, query_hash)
+        cached_result = ProductCacheManager.get_cache(
+            'products_list', user_id, user_role, query_hash)
         if cached_result:
-            logger.info(f"Cache hit for product list: user {user_id}")
+            logger.info(
+                f"Cache hit for product list with search: user {user_id}")
             return Response(cached_result)
-        
+
         # Get data using parent method
         response = super().list(request, *args, **kwargs)
-        
-        # Cache for 10 minutes if successful
+
+        # Cache for 5 minutes if successful (shorter cache for searches)
         if response.status_code == 200:
-            ProductCacheManager.set_cache('products_list', response.data, 600, user_id, user_role, query_hash)
-            logger.info(f"Cache set for product list: user {user_id}")
-        
+            ProductCacheManager.set_cache(
+                'products_list', response.data, 300, user_id, user_role, query_hash)
+            logger.info(
+                f"Cache set for product list with search: user {user_id}")
+
+        return response
+
+    def get(self, request, *args, **kwargs):
+        """Override to provide search parameter documentation in response headers"""
+        response = super().get(request, *args, **kwargs)
+
+        # Add custom headers with available search parameters
+        search_params = [
+            'search', 'id', 'quality', 'qualities', 'origine', 'status', 'statuses',
+            'payement', 'client', 'client_id', 'created_by', 'min_price', 'max_price',
+            'min_quantity', 'max_quantity', 'date_from', 'date_to', 'end_date_from',
+            'end_date_to', 'min_estimation_time', 'max_estimation_time', 'min_oil_volume',
+            'max_oil_volume', 'min_total_waste', 'max_total_waste', 'min_waste_vendus',
+            'max_waste_vendus', 'min_waste_price', 'max_waste_price', 'has_waste',
+            'has_vendus_waste', 'ordering'
+        ]
+
+        response['X-Available-Search-Params'] = ','.join(search_params)
+        response['X-Search-Example'] = '?search=excellente&status=done&min_price=100&ordering=-created_at'
+
         return response
 
 
@@ -325,21 +690,23 @@ class ClientProductListView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         """Override to add caching for client products"""
         user_id = request.user.id
-        
+
         # Try cache first
-        cached_result = ProductCacheManager.get_cache('client_products', user_id)
+        cached_result = ProductCacheManager.get_cache(
+            'client_products', user_id)
         if cached_result:
             logger.info(f"Cache hit for client products: user {user_id}")
             return Response(cached_result)
-        
+
         # Get data using parent method
         response = super().list(request, *args, **kwargs)
-        
+
         # Cache for 5 minutes if successful
         if response.status_code == 200:
-            ProductCacheManager.set_cache('client_products', response.data, 300, user_id)
+            ProductCacheManager.set_cache(
+                'client_products', response.data, 300, user_id)
             logger.info(f"Cache set for client products: user {user_id}")
-        
+
         return response
 
 
@@ -349,22 +716,24 @@ class SearchProductByStatus(APIView):
     def get(self, request, status):
         try:
             # Check cache first
-            cached_result = ProductCacheManager.get_cache('products_by_status', status)
+            cached_result = ProductCacheManager.get_cache(
+                'products_by_status', status)
             if cached_result:
                 logger.info(f"Cache hit for products by status: {status}")
                 return Response(cached_result)
-            
+
             products = Product.objects.filter(status=status)
             if not products.exists():
                 return Response({"message": "No products found with this status."}, status=404)
 
             serializer = ProductSerializer(products, many=True)
             result_data = serializer.data
-            
+
             # Cache for 5 minutes
-            ProductCacheManager.set_cache('products_by_status', result_data, 300, status)
+            ProductCacheManager.set_cache(
+                'products_by_status', result_data, 300, status)
             logger.info(f"Cache set for products by status: {status}")
-            
+
             return Response(result_data)
         except Product.DoesNotExist:
             return Response({"message": "Product not found."}, status=404)
@@ -387,21 +756,25 @@ class AdminClientProductListView(generics.ListAPIView):
         """Override to add caching for admin client product list"""
         client_id = self.kwargs['client_id']
         user_id = request.user.id
-        
+
         # Try cache first
-        cached_result = ProductCacheManager.get_cache('admin_client_products', client_id, user_id)
+        cached_result = ProductCacheManager.get_cache(
+            'admin_client_products', client_id, user_id)
         if cached_result:
-            logger.info(f"Cache hit for admin client products: client {client_id}, user {user_id}")
+            logger.info(
+                f"Cache hit for admin client products: client {client_id}, user {user_id}")
             return Response(cached_result)
-        
+
         # Get data using parent method
         response = super().list(request, *args, **kwargs)
-        
+
         # Cache for 10 minutes if successful
         if response.status_code == 200:
-            ProductCacheManager.set_cache('admin_client_products', response.data, 600, client_id, user_id)
-            logger.info(f"Cache set for admin client products: client {client_id}, user {user_id}")
-        
+            ProductCacheManager.set_cache(
+                'admin_client_products', response.data, 600, client_id, user_id)
+            logger.info(
+                f"Cache set for admin client products: client {client_id}, user {user_id}")
+
         return response
 
 
@@ -433,15 +806,17 @@ class ProductReportView(APIView):
                 'user_id': request.user.id,
                 'user_role': request.user.role
             }
-            report_hash = hashlib.md5(json.dumps(report_params, sort_keys=True).encode()).hexdigest()[:8]
-            
+            report_hash = hashlib.md5(json.dumps(
+                report_params, sort_keys=True).encode()).hexdigest()[:8]
+
             # For reports, we cache for shorter time due to file nature
-            cached_report = ProductCacheManager.get_cache('product_report', report_hash)
+            cached_report = ProductCacheManager.get_cache(
+                'product_report', report_hash)
             if cached_report:
                 logger.info(f"Cache hit for product report: {report_hash}")
                 # Note: For file responses, you might want to handle this differently
                 # This is just for demonstration
-            
+
             # Base queryset with select_related for performance
             queryset = Product.objects.all().select_related('client', 'created_by')
 
@@ -754,11 +1129,13 @@ class SingleProductPDFView(View):
         try:
             # Check cache first for PDF
             user_id = request.user.id
-            cached_pdf = ProductCacheManager.get_cache('product_pdf', product_id, user_id)
+            cached_pdf = ProductCacheManager.get_cache(
+                'product_pdf', product_id, user_id)
             if cached_pdf:
-                logger.info(f"Cache hit for product PDF: {product_id}, user: {user_id}")
+                logger.info(
+                    f"Cache hit for product PDF: {product_id}, user: {user_id}")
                 # Return cached PDF data - you might need to adjust this based on your caching strategy
-            
+
             # Debug logging
             logger.info(
                 f"PDF download request for product {product_id} by user {request.user.id}")
@@ -1144,90 +1521,76 @@ class TotalQuantityView(APIView):
 
     def get(self, request):
         try:
-            # Check cache first - mise à jour de la clé de cache pour inclure les déchets
-            cached_quantity = ProductCacheManager.get_cache('total_quantity_with_waste')
+            cached_quantity = ProductCacheManager.get_cache(
+                'total_quantity_with_waste')
             if cached_quantity:
                 logger.info("Cache hit for total quantity with waste")
                 return Response(cached_quantity)
 
-            # First, let's check if there are any products
             total_products = Product.objects.count()
             logger.info(f"Total products count: {total_products}")
 
             if total_products == 0:
                 empty_result = {
-                    'total_quantity': 0,
-                    'total_oil_volume': 0,
-                    'overall_yield_percentage': 0,
+                    'total_quantity': Decimal(0),
+                    'total_oil_volume': Decimal(0),
+                    'overall_yield_percentage': Decimal(0),
                     'waste_summary': {
-                        'total_waste_kg': 0,
-                        'waste_vendus_kg': 0,
-                        'waste_non_vendus_kg': 0,
-                        'waste_vendus_price': 0,
-                        'vendus_percentage': 0,
-                        'non_vendus_percentage': 0
+                        'total_waste_kg': Decimal(0),
+                        'waste_vendus_kg': Decimal(0),
+                        'waste_non_vendus_kg': Decimal(0),
+                        'waste_vendus_price': Decimal(0),
+                        'vendus_percentage': Decimal(0),
+                        'non_vendus_percentage': Decimal(0)
                     },
                     'message': 'No products found'
                 }
-                # Cache empty result for shorter time
-                ProductCacheManager.set_cache('total_quantity_with_waste', empty_result, 60)
+                ProductCacheManager.set_cache(
+                    'total_quantity_with_waste', empty_result, 60)
                 return Response(empty_result, status=status.HTTP_200_OK)
 
-            # Calculate total quantity of olives across all products
-            total_quantity_result = Product.objects.aggregate(
-                total=Sum('quantity')
-            )
-            total_quantity = total_quantity_result['total'] or 0
+            # Total quantity
+            total_quantity = Decimal(Product.objects.aggregate(
+                total=Sum('quantity'))['total'] or 0)
             logger.info(f"Total quantity: {total_quantity}")
 
-            # Calculate total oil volume - separate queries to avoid type mixing
-            # First get products with non-null olive_oil_volume
-            total_oil_from_db = Product.objects.filter(
+            # Total oil volume
+            total_oil_from_db = Decimal(Product.objects.filter(
                 olive_oil_volume__isnull=False
-            ).aggregate(
-                total=Sum('olive_oil_volume')
-            )['total'] or 0
+            ).aggregate(total=Sum('olive_oil_volume'))['total'] or 0)
 
-            # Then calculate for products with null olive_oil_volume
-            products_without_oil_volume = Product.objects.filter(
-                olive_oil_volume__isnull=True
-            )
-
-            manual_oil_calculation = 0
-            for product in products_without_oil_volume:
+            manual_oil_calculation = Decimal(0)
+            for product in Product.objects.filter(olive_oil_volume__isnull=True):
                 yield_rate = getattr(Product, 'OLIVE_OIL_YIELD_MAP', {}).get(
-                    product.quality, 0.17
-                )
-                manual_oil_calculation += product.quantity * yield_rate
+                    product.quality, Decimal('0.17'))
+                manual_oil_calculation += Decimal(product.quantity) * \
+                    Decimal(yield_rate)
 
-            total_oil_volume = float(total_oil_from_db) + manual_oil_calculation
+            total_oil_volume = total_oil_from_db + manual_oil_calculation
             logger.info(f"Total oil volume: {total_oil_volume}")
 
-            # Calculate overall average yield
-            overall_yield_percentage = 0
-            if total_quantity > 0:
-                overall_yield_percentage = (total_oil_volume / float(total_quantity)) * 100
+            overall_yield_percentage = (
+                total_oil_volume / total_quantity * 100) if total_quantity > 0 else Decimal('0')
 
-            # NOUVEAU : Calculate waste statistics
+            # Waste statistics
             waste_stats = Product.objects.aggregate(
                 total_waste=Sum('total_waste_kg'),
                 waste_vendus=Sum('waste_vendus_kg'),
                 waste_non_vendus=Sum('waste_non_vendus_kg'),
                 waste_revenue=Sum('waste_vendus_price')
             )
+            total_waste = Decimal(waste_stats['total_waste'] or 0)
+            waste_vendus = Decimal(waste_stats['waste_vendus'] or 0)
+            waste_non_vendus = Decimal(waste_stats['waste_non_vendus'] or 0)
+            waste_revenue = Decimal(waste_stats['waste_revenue'] or 0)
 
-            total_waste = float(waste_stats['total_waste'] or 0)
-            waste_vendus = float(waste_stats['waste_vendus'] or 0)
-            waste_non_vendus = float(waste_stats['waste_non_vendus'] or 0)
-            waste_revenue = float(waste_stats['waste_revenue'] or 0)
+            vendus_percentage = (waste_vendus / total_waste *
+                                 100) if total_waste > 0 else Decimal('0')
+            non_vendus_percentage = (
+                waste_non_vendus / total_waste * 100) if total_waste > 0 else Decimal('0')
 
-            # Calculate waste percentages
-            vendus_percentage = (waste_vendus / total_waste * 100) if total_waste > 0 else 0
-            non_vendus_percentage = (waste_non_vendus / total_waste * 100) if total_waste > 0 else 0
-
-            # Get basic breakdown by status (existant)
+            # Breakdown by status
             quantity_by_status = {}
-
             status_choices = getattr(Product, 'STATUS_CHOICES', [
                 ('pending', 'Pending'),
                 ('doing', 'Doing'),
@@ -1235,35 +1598,24 @@ class TotalQuantityView(APIView):
                 ('canceled', 'Canceled')
             ])
 
-            for status_choice in status_choices:
-                status_key = status_choice[0]
+            for status_key, _ in status_choices:
                 status_products = Product.objects.filter(status=status_key)
+                status_quantity = Decimal(status_products.aggregate(
+                    total=Sum('quantity'))['total'] or 0)
 
-                status_quantity = status_products.aggregate(
-                    total=Sum('quantity')
-                )['total'] or 0
-
-                # Calculate oil volume for this status - separate queries
-                status_oil_from_db = status_products.filter(
+                status_oil_from_db = Decimal(status_products.filter(
                     olive_oil_volume__isnull=False
-                ).aggregate(
-                    total=Sum('olive_oil_volume')
-                )['total'] or 0
+                ).aggregate(total=Sum('olive_oil_volume'))['total'] or 0)
 
-                status_manual_oil = 0
-                status_products_without_oil = status_products.filter(
-                    olive_oil_volume__isnull=True
-                )
-
-                for product in status_products_without_oil:
+                status_manual_oil = Decimal(0)
+                for product in status_products.filter(olive_oil_volume__isnull=True):
                     yield_rate = getattr(Product, 'OLIVE_OIL_YIELD_MAP', {}).get(
-                        product.quality, 0.17
-                    )
-                    status_manual_oil += product.quantity * yield_rate
+                        product.quality, Decimal('0.17'))
+                    status_manual_oil += Decimal(product.quantity) * \
+                        Decimal(yield_rate)
 
-                status_oil = float(status_oil_from_db) + status_manual_oil
+                status_oil = status_oil_from_db + status_manual_oil
 
-                # NOUVEAU : Add waste stats by status
                 status_waste_stats = status_products.aggregate(
                     total_waste=Sum('total_waste_kg'),
                     vendus=Sum('waste_vendus_kg'),
@@ -1272,17 +1624,17 @@ class TotalQuantityView(APIView):
                 )
 
                 quantity_by_status[status_key] = {
-                    'total_quantity': float(status_quantity),
-                    'total_oil': float(status_oil),
+                    'total_quantity': status_quantity,
+                    'total_oil': status_oil,
                     'waste_stats': {
-                        'total_waste_kg': float(status_waste_stats['total_waste'] or 0),
-                        'waste_vendus_kg': float(status_waste_stats['vendus'] or 0),
-                        'waste_non_vendus_kg': float(status_waste_stats['non_vendus'] or 0),
-                        'waste_revenue_dt': float(status_waste_stats['revenue'] or 0)
+                        'total_waste_kg': Decimal(status_waste_stats['total_waste'] or 0),
+                        'waste_vendus_kg': Decimal(status_waste_stats['vendus'] or 0),
+                        'waste_non_vendus_kg': Decimal(status_waste_stats['non_vendus'] or 0),
+                        'waste_revenue_dt': Decimal(status_waste_stats['revenue'] or 0)
                     }
                 }
 
-            # NOUVEAU : Add waste breakdown by quality
+            # Waste by quality
             waste_by_quality = {}
             for quality, _ in Product.QUALITY_CHOICES:
                 quality_waste = Product.objects.filter(quality=quality).aggregate(
@@ -1292,23 +1644,20 @@ class TotalQuantityView(APIView):
                     revenue=Sum('waste_vendus_price'),
                     product_count=Count('id')
                 )
-                
                 waste_by_quality[quality] = {
                     'product_count': quality_waste['product_count'] or 0,
-                    'total_waste_kg': float(quality_waste['total_waste'] or 0),
-                    'waste_vendus_kg': float(quality_waste['vendus'] or 0),
-                    'waste_non_vendus_kg': float(quality_waste['non_vendus'] or 0),
-                    'waste_revenue_dt': float(quality_waste['revenue'] or 0)
+                    'total_waste_kg': Decimal(quality_waste['total_waste'] or 0),
+                    'waste_vendus_kg': Decimal(quality_waste['vendus'] or 0),
+                    'waste_non_vendus_kg': Decimal(quality_waste['non_vendus'] or 0),
+                    'waste_revenue_dt': Decimal(quality_waste['revenue'] or 0)
                 }
 
             quantity_data = {
-                'total_quantity': float(total_quantity),
-                'total_oil_volume': float(total_oil_volume),
+                'total_quantity': total_quantity,
+                'total_oil_volume': total_oil_volume,
                 'overall_yield_percentage': round(overall_yield_percentage, 2),
                 'quantity_by_status': quantity_by_status,
                 'total_products': total_products,
-                
-                # NOUVEAU : Waste summary
                 'waste_summary': {
                     'total_waste_kg': round(total_waste, 3),
                     'waste_vendus_kg': round(waste_vendus, 3),
@@ -1316,17 +1665,14 @@ class TotalQuantityView(APIView):
                     'waste_vendus_price_dt': round(waste_revenue, 2),
                     'vendus_percentage': round(vendus_percentage, 2),
                     'non_vendus_percentage': round(non_vendus_percentage, 2),
-                    'average_price_per_kg': round(waste_revenue / waste_vendus, 3) if waste_vendus > 0 else 0
+                    'average_price_per_kg': round((waste_revenue / waste_vendus) if waste_vendus > 0 else 0, 3)
                 },
-                
-                # NOUVEAU : Waste breakdown by quality
                 'waste_by_quality': waste_by_quality
             }
 
-            # Cache for 15 minutes - update cache key
-            ProductCacheManager.set_cache('total_quantity_with_waste', quantity_data, 900)
+            ProductCacheManager.set_cache(
+                'total_quantity_with_waste', quantity_data, 900)
             logger.info("Cache set for total quantity with waste")
-
             return Response(quantity_data, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -1335,20 +1681,15 @@ class TotalQuantityView(APIView):
             logger.error(
                 f"Error getting total quantity, oil volume, and waste stats: {str(e)}")
             logger.error(f"Full traceback: {error_details}")
-
             error_response = {
                 'error': 'Failed to get total quantity, oil volume, and waste statistics',
                 'error_type': type(e).__name__,
                 'details': str(e)
             }
-
             if getattr(settings, 'DEBUG', False):
                 error_response['traceback'] = error_details
+            return Response(error_response, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            return Response(
-                error_response,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
 class OriginPercentageView(APIView):
     """
@@ -1359,7 +1700,8 @@ class OriginPercentageView(APIView):
     def get(self, request):
         try:
             # Check cache first
-            cached_origins = ProductCacheManager.get_cache('origin_percentages')
+            cached_origins = ProductCacheManager.get_cache(
+                'origin_percentages')
             if cached_origins:
                 logger.info("Cache hit for origin percentages")
                 return Response(cached_origins)
@@ -1376,7 +1718,8 @@ class OriginPercentageView(APIView):
                     'origin_percentages': []
                 }
                 # Cache empty result for shorter time
-                ProductCacheManager.set_cache('origin_percentages', empty_result, 60)
+                ProductCacheManager.set_cache(
+                    'origin_percentages', empty_result, 60)
                 return Response(empty_result, status=status.HTTP_200_OK)
 
             # Get count by origin
@@ -1421,7 +1764,8 @@ class OriginPercentageView(APIView):
             }
 
             # Cache for 15 minutes
-            ProductCacheManager.set_cache('origin_percentages', origin_data, 900)
+            ProductCacheManager.set_cache(
+                'origin_percentages', origin_data, 900)
             logger.info("Cache set for origin percentages")
 
             return Response(origin_data, status=status.HTTP_200_OK)

@@ -1,3 +1,5 @@
+from django.db import migrations
+from rest_framework import serializers
 from django.db import models, transaction
 from users.models import CustomUser
 from django.utils import timezone
@@ -5,6 +7,7 @@ from datetime import timedelta
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from factures.models import Facture
+from decimal import Decimal
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,24 +32,24 @@ class Product(models.Model):
     ]
 
     QUALITY_PRICE_MAP = {
-        'excellente': 15,
-        'bonne': 12,
-        'moyenne': 10,
-        'mauvaise': 8,
+        'excellente': Decimal('15'),
+        'bonne': Decimal('12'),
+        'moyenne': Decimal('10'),
+        'mauvaise': Decimal('8'),
     }
 
     OLIVE_OIL_YIELD_MAP = {
-        'excellente': 0.20,
-        'bonne': 0.18,
-        'moyenne': 0.17,
-        'mauvaise': 0.15,
+        'excellente': Decimal('0.20'),
+        'bonne': Decimal('0.18'),
+        'moyenne': Decimal('0.17'),
+        'mauvaise': Decimal('0.15'),
     }
 
     WASTE_COEFFICIENTS = {
-        'excellente': 0.82,
-        'bonne': 0.835,
-        'moyenne': 0.85,
-        'mauvaise': 0.875,
+        'excellente': Decimal('0.82'),
+        'bonne': Decimal('0.835'),
+        'moyenne': Decimal('0.85'),
+        'mauvaise': Decimal('0.875'),
     }
 
     quality = models.CharField(
@@ -76,7 +79,7 @@ class Product(models.Model):
     waste_vendus_kg = models.DecimalField(
         max_digits=10,
         decimal_places=3,
-        default=0,
+        default=Decimal('0'),  # FIXÉ: Utilise Decimal au lieu de 0
         help_text="Sold waste in kg"
     )
 
@@ -91,7 +94,7 @@ class Product(models.Model):
     waste_vendus_price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        default=0,
+        default=Decimal('0'),  # FIXÉ: Utilise Decimal au lieu de 0
         help_text="Revenue from sold waste in DT"
     )
 
@@ -129,56 +132,84 @@ class Product(models.Model):
 
     def calculate_olive_oil_volume(self):
         """Calculate the expected olive oil volume based on olive quality and quantity"""
-        yield_per_kg = self.OLIVE_OIL_YIELD_MAP.get(self.quality, 0.17)
-        return self.quantity * yield_per_kg
+        yield_per_kg = self.OLIVE_OIL_YIELD_MAP.get(
+            self.quality, Decimal('0.17'))
+        return Decimal(str(self.quantity)) * yield_per_kg
 
     def get_oil_efficiency_percentage(self):
         """Get the oil extraction efficiency as a percentage"""
-        yield_per_kg = self.OLIVE_OIL_YIELD_MAP.get(self.quality, 0.17)
-        return yield_per_kg * 100
+        yield_per_kg = self.OLIVE_OIL_YIELD_MAP.get(
+            self.quality, Decimal('0.17'))
+        return float(yield_per_kg * Decimal('100'))
 
     def calculate_total_waste(self):
         """Calculate total waste based on olive quality and quantity"""
-        waste_coefficient = self.WASTE_COEFFICIENTS.get(self.quality, 0.85)
-        return self.quantity * waste_coefficient
+        waste_coefficient = self.WASTE_COEFFICIENTS.get(
+            self.quality, Decimal('0.85'))
+        return Decimal(str(self.quantity)) * waste_coefficient
 
     def calculate_waste_non_vendus(self):
         """Calculate unsold waste"""
         if self.total_waste_kg:
-            return self.total_waste_kg - self.waste_vendus_kg
-        return 0
+            # FIXÉ: Assurer que waste_vendus_kg est Decimal
+            waste_vendus = self.waste_vendus_kg or Decimal('0')
+            if isinstance(waste_vendus, (int, float)):
+                waste_vendus = Decimal(str(waste_vendus))
+            return self.total_waste_kg - waste_vendus
+        return Decimal('0')
 
     def get_waste_percentage(self):
         """Get waste percentage from total olives"""
         if self.quantity > 0 and self.total_waste_kg:
-            return (self.total_waste_kg / self.quantity) * 100
-        return 0
+            percentage = (self.total_waste_kg /
+                          Decimal(str(self.quantity))) * Decimal('100')
+            return float(percentage)
+        return 0.0
 
     def get_waste_vendus_percentage(self):
         """Get percentage of sold waste"""
         if self.total_waste_kg and self.total_waste_kg > 0:
-            return (self.waste_vendus_kg / self.total_waste_kg) * 100
-        return 0
+            # FIXÉ: Assurer que waste_vendus_kg est Decimal
+            waste_vendus = self.waste_vendus_kg or Decimal('0')
+            if isinstance(waste_vendus, (int, float)):
+                waste_vendus = Decimal(str(waste_vendus))
+            percentage = (waste_vendus / self.total_waste_kg) * Decimal('100')
+            return float(percentage)
+        return 0.0
 
     def sell_waste(self, quantity_sold, price_per_kg):
         """Mark some waste as sold"""
-        if self.waste_vendus_kg + quantity_sold <= self.total_waste_kg:
-            self.waste_vendus_kg += quantity_sold
-            self.waste_vendus_price += quantity_sold * price_per_kg
+        # FIXÉ: Convertir les entrées en Decimal
+        quantity_sold = Decimal(str(quantity_sold))
+        price_per_kg = Decimal(str(price_per_kg))
+
+        current_vendus = self.waste_vendus_kg or Decimal('0')
+        if isinstance(current_vendus, (int, float)):
+            current_vendus = Decimal(str(current_vendus))
+
+        if current_vendus + quantity_sold <= self.total_waste_kg:
+            self.waste_vendus_kg = current_vendus + quantity_sold
+
+            current_price = self.waste_vendus_price or Decimal('0')
+            if isinstance(current_price, (int, float)):
+                current_price = Decimal(str(current_price))
+
+            self.waste_vendus_price = current_price + \
+                (quantity_sold * price_per_kg)
             self.waste_non_vendus_kg = self.calculate_waste_non_vendus()
             self.save()
             return True
         return False
 
     def save(self, *args, **kwargs):
-        """Calculate price, olive oil volume, and end_time"""
+        """Calculate price, olive oil volume, and waste amounts"""
         logger.info(
             f"Saving product {self.id if self.id else 'new'} - Status: {self.status}, Quality: {self.quality}"
         )
 
-        # Calculate price based on quality
-        base_price = self.QUALITY_PRICE_MAP.get(self.quality, 10)
-        self.price = base_price * self.quantity
+        # FIXÉ: Calculate price based on quality using Decimal
+        base_price = self.QUALITY_PRICE_MAP.get(self.quality, Decimal('10'))
+        self.price = base_price * Decimal(str(self.quantity))
 
         # Calculate olive oil volume
         self.olive_oil_volume = self.calculate_olive_oil_volume()
@@ -186,6 +217,13 @@ class Product(models.Model):
         # Calculate waste amounts
         self.total_waste_kg = self.calculate_total_waste()
         self.waste_non_vendus_kg = self.calculate_waste_non_vendus()
+
+        # FIXÉ: Assurer que les champs Decimal sont bien des Decimal
+        if self.waste_vendus_kg is not None and not isinstance(self.waste_vendus_kg, Decimal):
+            self.waste_vendus_kg = Decimal(str(self.waste_vendus_kg))
+
+        if self.waste_vendus_price is not None and not isinstance(self.waste_vendus_price, Decimal):
+            self.waste_vendus_price = Decimal(str(self.waste_vendus_price))
 
         # Calculate end_time if not set
         if not self.end_time:
@@ -196,7 +234,7 @@ class Product(models.Model):
 
         logger.info(
             f"Product save - Quality: {self.quality}, Price: {self.price}, "
-            f"Quantity: {self.quantity}kg, Olive Oil Volume: {self.olive_oil_volume}L"
+            f"Quantity: {self.quantity}kg, Olive Oil Volume: {self.olive_oil_volume}L, "
             f"Total Waste: {self.total_waste_kg}kg, Vendus: {self.waste_vendus_kg}kg, Non Vendus: {self.waste_non_vendus_kg}kg"
         )
 
@@ -213,233 +251,149 @@ class Product(models.Model):
         ordering = ['end_time']
 
 
-@receiver(post_save, sender=Product)
-def handle_product_status_change(sender, instance, created, **kwargs):
-    """Handle facture creation and notifications when product status changes to 'done'"""
-    if created:
+# serializers.py - Version corrigée
+
+
+logger = logging.getLogger(__name__)
+
+
+class ProductSerializer(serializers.ModelSerializer):
+    client_name = serializers.CharField(
+        source='client.username', read_only=True)
+    client = serializers.SlugRelatedField(
+        queryset=CustomUser.objects.filter(role='CLIENT'),
+        slug_field='cin',
+        required=True
+    )
+    created_by = serializers.SlugRelatedField(
+        slug_field='username', read_only=True)
+    end_time = serializers.DateTimeField(read_only=True)
+    olive_oil_volume = serializers.DecimalField(
+        max_digits=10, decimal_places=3, read_only=True)
+    oil_efficiency_percentage = serializers.SerializerMethodField()
+    total_waste_kg = serializers.DecimalField(
+        max_digits=10, decimal_places=3, read_only=True)
+    waste_vendus_kg = serializers.DecimalField(
+        max_digits=10, decimal_places=3, read_only=True)
+    waste_non_vendus_kg = serializers.DecimalField(
+        max_digits=10, decimal_places=3, read_only=True)
+    waste_vendus_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True)
+    waste_percentage = serializers.SerializerMethodField()
+    waste_vendus_percentage = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Product
+        fields = [
+            'id', 'quality', 'origine', 'price',
+            'quantity', 'olive_oil_volume', 'oil_efficiency_percentage',
+            'total_waste_kg', 'waste_vendus_kg', 'waste_non_vendus_kg',
+            'waste_vendus_price', 'waste_percentage', 'waste_vendus_percentage',
+            'client', 'client_name', 'status', 'created_by',
+            'created_at', 'estimation_time', 'end_time', 'payement'
+        ]
+        read_only_fields = [
+            'created_by', 'created_at', 'client_name', 'end_time',
+            'olive_oil_volume', 'oil_efficiency_percentage',
+            'total_waste_kg', 'waste_vendus_kg', 'waste_non_vendus_kg',
+            'waste_vendus_price', 'waste_percentage', 'waste_vendus_percentage'
+        ]
+
+    def get_oil_efficiency_percentage(self, obj):
+        return obj.get_oil_efficiency_percentage()
+
+    def get_waste_percentage(self, obj):
+        return obj.get_waste_percentage()
+
+    def get_waste_vendus_percentage(self, obj):
+        return obj.get_waste_vendus_percentage()
+
+    def validate_client(self, value):
+        if value.role != 'CLIENT':
+            raise serializers.ValidationError(
+                "The client must have the 'CLIENT' role.")
+        return value
+
+    def validate_estimation_time(self, value):
+        if value <= 0:
+            raise serializers.ValidationError(
+                "Estimation time must be greater than 0 minutes.")
+        return value
+
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        if 'estimation_time' not in validated_data:
+            validated_data['estimation_time'] = validated_data.get(
+                'quantity', 1) * 30
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        """FIXÉ: Update avec gestion correcte des types Decimal"""
         logger.info(
-            f"New product created: {instance.id} - {instance.quantity}kg olives "
-            f"({instance.quality}) → {instance.olive_oil_volume}L oil, skipping facture logic"
-        )
-        return
+            f"Updating product {instance.id} with data: {validated_data}")
 
-    try:
-        logger.info(
-            f"Product status change handler - ID: {instance.pk}, Status: {instance.status}, "
-            f"Payment: {instance.payement}, Oil Volume: {instance.olive_oil_volume}L"
-        )
+        old_status = instance.status
+        new_status = validated_data.get('status', old_status)
 
-        if instance.status == 'done' and instance.payement == 'unpaid':
-            with transaction.atomic():
-                existing_facture = Facture.objects.filter(
-                    client=instance.client,
-                    payment_status='unpaid'
-                ).first()
-
-                if existing_facture:
-                    facture = existing_facture
-                    logger.info(
-                        f"Using existing facture: {facture.facture_number}")
-                else:
-                    facture = Facture.objects.create(
-                        client=instance.client,
-                        payment_status='unpaid',
-                        tva_rate=20,
-                        credit_card_fee=12
-                    )
-                    logger.info(
-                        f"Created new facture: {facture.facture_number}")
-
-                if instance.facture != facture:
-                    Product.objects.filter(
-                        pk=instance.pk).update(facture=facture)
-                    logger.info(
-                        f"Linked product {instance.pk} to facture {facture.facture_number}"
-                    )
-
-                facture.calculate_totals()
-                facture.save()
-                logger.info(
-                    f"Updated facture totals - Total: {facture.total_amount}, "
-                    f"TVA: {facture.tva_amount}, Final: {facture.final_total}"
-                )
-
-                # Enhanced notification sending with oil volume info
-                logger.info(
-                    f"Starting notification process for product {instance.id} "
-                    f"({instance.quantity}kg → {instance.olive_oil_volume}L oil)"
-                )
-
-                # Debug user notification settings
-                user_debug_info = instance.client.get_notification_debug_info()
-                logger.info(
-                    f"User {instance.client.id} notification debug: {user_debug_info}")
-
-                # Import notification functions
-                from tickets.utils import (
-                    send_push_notification_for_product,
-                    send_email_notification_for_product,
-                    send_sms_notification_for_product
-                )
-
-                # Try to import and create notification record
-                try:
-                    from tickets.models import Notification
-                    notification = Notification.create_product_ready_notification(
-                        user=instance.client,
-                        product=instance,
-                        facture=facture
-                    )
-                    logger.info(
-                        f"Created notification record: {notification.id}")
-                except ImportError:
-                    logger.warning(
-                        "Notification model not available, skipping database record")
-                except Exception as e:
-                    logger.error(
-                        f"Error creating notification record: {str(e)}")
-
-                # Initialize notification results
-                notification_results = {
-                    'push': False,
-                    'email': False,
-                    'sms': False
-                }
-
-                # Send push notification with enhanced error handling
-                try:
-                    if instance.client.can_receive_push_notifications():
-                        logger.info(
-                            f"User {instance.client.id} can receive push notifications, sending...")
-                        push_success = send_push_notification_for_product(
-                            user=instance.client,
-                            product=instance,
-                            facture=facture
-                        )
-                        notification_results['push'] = push_success
-                        if push_success:
-                            logger.info(
-                                f"Push notification sent successfully for product {instance.id}")
-                        else:
-                            logger.warning(
-                                f"Push notification failed for product {instance.id}")
-                    else:
-                        logger.info(
-                            f"User {instance.client.id} cannot receive push notifications, skipping...")
-                except Exception as e:
-                    logger.error(
-                        f"Error sending push notification for product {instance.id}: {str(e)}")
-
-                # Send email notification
-                try:
-                    if instance.client.can_receive_email_notifications():
-                        logger.info(
-                            f"User {instance.client.id} can receive email notifications, sending...")
-                        email_success = send_email_notification_for_product(
-                            user=instance.client,
-                            product=instance,
-                            facture=facture
-                        )
-                        notification_results['email'] = email_success
-                        if email_success:
-                            logger.info(
-                                f"Email notification sent successfully for product {instance.id}")
-                        else:
-                            logger.warning(
-                                f"Email notification failed for product {instance.id}")
-                    else:
-                        logger.info(
-                            f"User {instance.client.id} cannot receive email notifications, skipping...")
-                except Exception as e:
-                    logger.error(
-                        f"Error sending email notification for product {instance.id}: {str(e)}")
-
-                # Send SMS notification
-                try:
-                    if instance.client.can_receive_sms_notifications():
-                        logger.info(
-                            f"User {instance.client.id} can receive SMS notifications, sending...")
-                        sms_success = send_sms_notification_for_product(
-                            user=instance.client,
-                            product=instance,
-                            facture=facture
-                        )
-                        notification_results['sms'] = sms_success
-                        if sms_success:
-                            logger.info(
-                                f"SMS notification sent successfully for product {instance.id}")
-                        else:
-                            logger.warning(
-                                f"SMS notification failed for product {instance.id}")
-                    else:
-                        logger.info(
-                            f"User {instance.client.id} cannot receive SMS notifications, skipping...")
-                except Exception as e:
-                    logger.error(
-                        f"Error sending SMS notification for product {instance.id}: {str(e)}")
-
-                # Log final results
-                successful_notifications = [
-                    k for k, v in notification_results.items() if v]
-                failed_notifications = [
-                    k for k, v in notification_results.items() if not v]
-
-                logger.info(
-                    f"Notification process completed for product {instance.id}. "
-                    f"Successful: {successful_notifications}, Failed: {failed_notifications}"
-                )
-
-                # If no notifications were sent, this might indicate a problem
-                if not any(notification_results.values()):
-                    logger.warning(
-                        f"No notifications were sent for product {instance.id}. "
-                        f"User {instance.client.id} notification settings: {user_debug_info}"
-                    )
-
-    except Exception as e:
-        logger.error(
-            f"Error in product status change handler: {str(e)}", exc_info=True)
-        raise
-
-
-@receiver(pre_save, sender=Product)
-def handle_product_payment_status(sender, instance, **kwargs):
-    """Remove product from facture when payment status changes to 'paid'"""
-    if not instance.pk:
-        return
-
-    try:
-        old_instance = Product.objects.get(pk=instance.pk)
-
-        # Only proceed if payement is changing unpaid -> paid
-        if old_instance.payement == 'unpaid' and instance.payement == 'paid':
+        if 'estimation_time' in validated_data and validated_data['estimation_time'] != instance.estimation_time:
+            instance.end_time = None
             logger.info(
-                f"Product {instance.pk} payment status changing from unpaid to paid "
-                f"({instance.quantity}kg → {instance.olive_oil_volume}L oil)"
-            )
+                f"Estimation time changed, resetting end_time for product {instance.id}")
 
-            with transaction.atomic():
-                facture = old_instance.facture
-                # Unlink the product
-                instance.facture = None
+        if old_status != 'done' and new_status == 'done':
+            validated_data['end_time'] = timezone.now()
+            logger.info(
+                f"Status changed to 'done', setting end_time to now for product {instance.id}")
 
-                # Recalculate facture totals
-                facture.calculate_totals()
-                facture.save()
+        # FIXÉ: Convertir les valeurs numériques en Decimal si nécessaire
+        for field in ['price', 'waste_vendus_kg', 'waste_vendus_price']:
+            if field in validated_data and validated_data[field] is not None:
+                if not isinstance(validated_data[field], Decimal):
+                    validated_data[field] = Decimal(str(validated_data[field]))
 
-                # If no more unpaid products, mark facture paid
-                if not facture.products.filter(payement='unpaid').exists():
-                    facture.payment_status = 'paid'
-                    facture.save()
-                    logger.info(
-                        f"Facture {facture.facture_number} marked as paid")
+        updated_instance = super().update(instance, validated_data)
 
-                logger.info(
-                    f"Removed product {instance.pk} from facture {facture.facture_number}"
-                )
-    except Product.DoesNotExist:
-        logger.warning(f"Product {instance.pk} not found in pre_save signal")
-    except Exception as e:
-        logger.error(
-            f"Error in product payment status handler: {str(e)}", exc_info=True)
-        raise
+        logger.info(
+            f"Product {instance.id} updated successfully. Status: {updated_instance.status}, "
+            f"Payment: {updated_instance.payement}, Oil Volume: {updated_instance.olive_oil_volume}L")
+
+        return updated_instance
+
+
+# Migration pour corriger les données existantes (si nécessaire)
+# XXXX_fix_decimal_types.py
+
+
+def fix_decimal_fields(apps, schema_editor):
+    """Corriger les champs Decimal qui pourraient être None ou float"""
+    Product = apps.get_model('products', 'Product')
+
+    for product in Product.objects.all():
+        changed = False
+
+        if product.waste_vendus_kg is None:
+            product.waste_vendus_kg = Decimal('0')
+            changed = True
+
+        if product.waste_vendus_price is None:
+            product.waste_vendus_price = Decimal('0')
+            changed = True
+
+        if changed:
+            product.save(update_fields=[
+                         'waste_vendus_kg', 'waste_vendus_price'])
+
+
+def reverse_fix_decimal_fields(apps, schema_editor):
+    pass  # Ne rien faire en cas de rollback
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        # Remplacez par votre dernière migration
+        ('products', 'previous_migration'),
+    ]
+
+    operations = [
+        migrations.RunPython(fix_decimal_fields, reverse_fix_decimal_fields),
+    ]
