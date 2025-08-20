@@ -1,5 +1,3 @@
-# Create this file: products/migrations/XXXX_auto_waste_calculation.py
-
 from django.db import migrations, models
 from decimal import Decimal
 import logging
@@ -20,17 +18,17 @@ def apply_automatic_waste_calculation(apps, schema_editor):
     }
     
     WASTE_SOLD_PERCENTAGE = {
-        'excellente': Decimal('0.75'),  # 75% of waste is sold
-        'bonne': Decimal('0.65'),       # 65% of waste is sold
-        'moyenne': Decimal('0.50'),     # 50% of waste is sold
-        'mauvaise': Decimal('0.30'),    # 30% of waste is sold
+        'excellente': Decimal('0.75'),  
+        'bonne': Decimal('0.65'),       
+        'moyenne': Decimal('0.50'),   
+        'mauvaise': Decimal('0.30'),   
     }
     
     WASTE_PRICE_PER_KG = {
-        'excellente': Decimal('5.50'),  # 5.50 DT per kg
-        'bonne': Decimal('4.80'),       # 4.80 DT per kg
-        'moyenne': Decimal('4.00'),     # 4.00 DT per kg
-        'mauvaise': Decimal('3.20'),    # 3.20 DT per kg
+        'excellente': Decimal('5.50'),  
+        'bonne': Decimal('4.80'),       
+        'moyenne': Decimal('4.00'),     
+        'mauvaise': Decimal('3.20'),    
     }
     
     updated_count = 0
