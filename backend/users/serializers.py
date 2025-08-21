@@ -3,10 +3,87 @@ from .models import CustomUser, Client
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework import serializers, exceptions
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError as DjangoValidationError
+import re
 
 
 User = get_user_model()
+
+
+def validate_email_domain(email):
+    """
+    Validate email domain against allowed domains.
+    Add your allowed domains here.
+    """
+    allowed_domains = [
+        'gmail.com',
+        'yahoo.com',
+        'outlook.com',
+        'hotmail.com',
+        'live.com',
+        'icloud.com',
+        'mail.com',
+    ]
+
+    if not email:
+        raise serializers.ValidationError("Email is required")
+
+    try:
+        validate_email(email)
+    except DjangoValidationError:
+        raise serializers.ValidationError("Enter a valid email address")
+
+    domain = email.lower().split('@')[1] if '@' in email else ''
+
+    if domain not in allowed_domains:
+        raise serializers.ValidationError(
+            f"Email domain '{domain}' is not allowed. "
+            f"Allowed domains: {', '.join(allowed_domains)}"
+        )
+
+    return email
+
+
+def validate_email_format_strict(email):
+    """
+    Strict email validation with additional checks
+    """
+    if not email:
+        raise serializers.ValidationError("Email is required")
+
+    # Basic format validation
+    try:
+        validate_email(email)
+    except DjangoValidationError:
+        raise serializers.ValidationError("Enter a valid email address")
+
+    # Additional format checks
+    email = email.lower().strip()
+
+    # Check for valid email pattern
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, email):
+        raise serializers.ValidationError("Email format is invalid")
+
+    # Check for consecutive dots
+    if '..' in email:
+        raise serializers.ValidationError(
+            "Email cannot contain consecutive dots")
+
+    # Check for valid characters in local part
+    local_part = email.split('@')[0]
+    if len(local_part) == 0 or len(local_part) > 64:
+        raise serializers.ValidationError(
+            "Email local part must be 1-64 characters")
+
+    # Check domain part
+    domain_part = email.split('@')[1]
+    if len(domain_part) == 0 or len(domain_part) > 255:
+        raise serializers.ValidationError(
+            "Email domain part must be 1-255 characters")
+
+    return email
 
 
 class EmailCINAuthSerializer(serializers.Serializer):
@@ -57,6 +134,19 @@ class CustomUserSerializer(serializers.ModelSerializer):
             'ville': {'required': False},  # Optional, will use default
         }
 
+    def validate_email(self, value):
+        """Validate email with domain restrictions"""
+        if value:
+            # Apply strict format validation
+            value = validate_email_format_strict(value)
+            # Apply domain validation
+            value = validate_email_domain(value)
+
+            # Check if email already exists
+            if CustomUser.objects.filter(email__iexact=value).exists():
+                raise serializers.ValidationError("Email already exists")
+        return value
+
     def create(self, validated_data):
         validated_data.setdefault('role', 'CLIENT')
         # If ville is not provided, it will use the model's default value
@@ -87,6 +177,19 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
             'password': {'write_only': True},
             'ville': {'required': False},
         }
+
+    def validate_email(self, value):
+        """Validate email with domain restrictions"""
+        if value:
+            # Apply strict format validation
+            value = validate_email_format_strict(value)
+            # Apply domain validation
+            value = validate_email_domain(value)
+
+            # Check if email already exists
+            if CustomUser.objects.filter(email__iexact=value).exists():
+                raise serializers.ValidationError("Email already exists")
+        return value
 
     def validate_role(self, value):
         valid_roles = ['EMPLOYEE', 'ACCOUNTANT']
@@ -138,7 +241,13 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
 
     def validate_email(self, value):
         if value:
-            queryset = CustomUser.objects.filter(email=value)
+            # Apply strict format validation
+            value = validate_email_format_strict(value)
+            # Apply domain validation
+            value = validate_email_domain(value)
+
+            # Check if email already exists (excluding current instance)
+            queryset = CustomUser.objects.filter(email__iexact=value)
             if self.instance:
                 queryset = queryset.exclude(pk=self.instance.pk)
             if queryset.exists():
@@ -199,10 +308,15 @@ class EmployeeAccountantUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_email(self, value):
-        """Ensure email uniqueness when updating"""
+        """Ensure email uniqueness when updating with domain validation"""
         if value:
+            # Apply strict format validation
+            value = validate_email_format_strict(value)
+            # Apply domain validation
+            value = validate_email_domain(value)
+
             # Exclude current instance from uniqueness check
-            queryset = CustomUser.objects.filter(email=value)
+            queryset = CustomUser.objects.filter(email__iexact=value)
             if self.instance:
                 queryset = queryset.exclude(pk=self.instance.pk)
             if queryset.exists():
