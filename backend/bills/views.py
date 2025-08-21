@@ -614,7 +614,6 @@ class BillDetailView(APIView):
         """
         Get a specific bill by ID with caching
         """
-        # Try cache first
         cached_bill = SimpleCacheManager.get_cache(
             'bill_detail', bill_id, request.user.id)
         if cached_bill:
@@ -624,7 +623,6 @@ class BillDetailView(APIView):
         bill = self.get_object(bill_id, request.user)
         serializer = BillSerializer(bill)
 
-        # Cache for 10 minutes
         SimpleCacheManager.set_cache(
             'bill_detail', serializer.data, 600, bill_id, request.user.id)
         logger.info(f"Cache set for bill detail: {bill_id}")
@@ -633,11 +631,12 @@ class BillDetailView(APIView):
 
     def put(self, request, bill_id):
         """
-        Update a bill (excluding image fields)
+        Update a bill (including image fields)
         """
         bill = self.get_object(bill_id, request.user)
 
-        serializer = BillUpdateSerializer(
+        # Use the full BillSerializer instead of BillUpdateSerializer to allow image updates
+        serializer = BillSerializer(
             bill,
             data=request.data,
             partial=False,
@@ -647,7 +646,6 @@ class BillDetailView(APIView):
         if serializer.is_valid():
             updated_bill = serializer.save()
 
-            # Clear cache after update
             SimpleCacheManager.delete_cache(
                 'bill_detail', bill_id, request.user.id)
             SimpleCacheManager.delete_cache('bill_stats', request.user.id, getattr(
@@ -662,11 +660,12 @@ class BillDetailView(APIView):
 
     def patch(self, request, bill_id):
         """
-        Partially update a bill (excluding image fields)
+        Partially update a bill
         """
         bill = self.get_object(bill_id, request.user)
 
-        serializer = BillUpdateSerializer(
+        # Use the full BillSerializer instead of BillUpdateSerializer to allow image updates
+        serializer = BillSerializer(
             bill,
             data=request.data,
             partial=True,
@@ -707,6 +706,43 @@ class BillDetailView(APIView):
             {'message': 'Bill deleted successfully'},
             status=status.HTTP_204_NO_CONTENT
         )
+
+    def post(self, request, bill_id):
+        """
+        Update only the bill image (separate endpoint for image updates)
+        """
+        if 'image' not in request.data and 'image' not in request.FILES:
+            return Response(
+                {'error': 'Image field is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        bill = self.get_object(bill_id, request.user)
+
+        # Only update the image field
+        serializer = BillSerializer(
+            bill,
+            data={'image': request.data.get(
+                'image') or request.FILES.get('image')},
+            partial=True,
+            context={'request': request}
+        )
+
+        if serializer.is_valid():
+            updated_bill = serializer.save()
+
+            # Clear cache after update
+            SimpleCacheManager.delete_cache(
+                'bill_detail', bill_id, request.user.id)
+            SimpleCacheManager.delete_cache('bill_stats', request.user.id, getattr(
+                request.user, 'role', 'client').lower())
+            SimpleCacheManager.delete_cache('bills_list', request.user.id)
+
+            return Response(
+                BillSerializer(updated_bill).data,
+                status=status.HTTP_200_OK
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class BillPDFDownloadView(APIView):

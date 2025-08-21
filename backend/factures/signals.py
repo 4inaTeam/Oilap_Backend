@@ -51,8 +51,8 @@ def update_facture_pdf_on_product_save(sender, instance, created, **kwargs):
                 # Force recalculate totals before PDF generation
                 facture.calculate_totals()
 
-                # Refresh the PDF with force regeneration
-                pdf_url = facture.refresh_pdf(force_regenerate=True)
+                # Refresh the PDF
+                pdf_url = facture.refresh_pdf()
                 if pdf_url:
                     logger.info(
                         f"PDF updated successfully for facture {facture.facture_number}")
@@ -82,8 +82,8 @@ def update_facture_pdf_on_product_delete(sender, instance, **kwargs):
             # Force recalculate totals after deletion
             facture.calculate_totals()
 
-            # Refresh the PDF with force regeneration
-            pdf_url = facture.refresh_pdf(force_regenerate=True)
+            # Refresh the PDF
+            pdf_url = facture.refresh_pdf()
             if pdf_url:
                 logger.info(
                     f"PDF updated successfully after product deletion for facture {facture.facture_number}")
@@ -95,49 +95,3 @@ def update_facture_pdf_on_product_delete(sender, instance, **kwargs):
         logger.error(f"Error in product delete signal: {str(e)}")
 
 
-# Alternative approach: Use a more specific signal for status changes
-@receiver(post_save, sender=Product)
-def handle_product_status_change_for_pdf(sender, instance, created, **kwargs):
-    """
-    Enhanced signal specifically for handling status changes that affect PDF generation
-    """
-    if not hasattr(instance, 'facture') or not instance.facture:
-        return
-
-    facture = instance.facture
-
-    try:
-        # Always update PDF if the product is 'done' to ensure consistency
-        if instance.status == 'done':
-            logger.info(
-                f"Updating PDF for facture {facture.facture_number} due to product {instance.id} status: {instance.status}")
-
-            # Small delay to ensure database consistency
-            import time
-            time.sleep(0.1)
-
-            # Force refresh facture from database
-            facture.refresh_from_db()
-
-            # Recalculate totals
-            facture.calculate_totals()
-
-            # Count done products for debugging
-            done_products_count = facture.products.filter(
-                status='done').count()
-            logger.info(
-                f"Facture {facture.facture_number} now has {done_products_count} done products")
-
-            # Force regenerate PDF
-            pdf_url = facture.refresh_pdf(force_regenerate=True)
-
-            if pdf_url:
-                logger.info(
-                    f"SUCCESS: PDF regenerated for facture {facture.facture_number}")
-            else:
-                logger.error(
-                    f"FAILED: PDF regeneration failed for facture {facture.facture_number}")
-
-    except Exception as e:
-        logger.error(
-            f"Error handling product status change for PDF: {str(e)}", exc_info=True)

@@ -23,7 +23,7 @@ def send_email_notification(user, facture):
             fail_silently=False,
         )
         logger.info(
-            f"✅ Email sent to {user.email} for facture {facture.facture_number}")
+            f"Email sent to {user.email} for facture {facture.facture_number}")
         return True
     except Exception as e:
         logger.error(f"Error sending email to {user.email}: {str(e)}")
@@ -46,7 +46,7 @@ def send_sms_notification(user, facture):
             to=f"+216{user.tel}"
         )
         logger.info(
-            f"✅ SMS sent to +216{user.tel} for facture {facture.facture_number}")
+            f"SMS sent to +216{user.tel} for facture {facture.facture_number}")
         return True
     except Exception as e:
         logger.error(f"Error sending SMS to +216{user.tel}: {str(e)}")
@@ -81,7 +81,7 @@ def send_push_notification(user, facture):
 
         # Send to FCM
         response = messaging.send(message)
-        logger.info(f"✅ FCM sent to user {user.id}, message_id={response}")
+        logger.info(f"FCM sent to user {user.id}, message_id={response}")
 
         # Log to Firestore (optional - you can remove this if you don't want Firestore logging)
         try:
@@ -101,7 +101,7 @@ def send_push_notification(user, facture):
                 'ticket_type': 'PUSH',
             })
             logger.info(
-                f"✅ Logged notification to Firestore for user {user.id}")
+                f"Logged notification to Firestore for user {user.id}")
         except Exception as firestore_error:
             logger.error(f"Error logging to Firestore: {str(firestore_error)}")
             # Don't fail the whole function if Firestore logging fails
@@ -182,7 +182,7 @@ Thank you!"""
             fail_silently=False,
         )
         logger.info(
-            f"✅ Product ready email sent to {user.email} for product {product.id}")
+            f"Product ready email sent to {user.email} for product {product.id}")
         return True
     except Exception as e:
         logger.error(
@@ -210,7 +210,7 @@ def send_sms_notification_for_product(user, product, facture):
             to=f"+216{user.tel}"
         )
         logger.info(
-            f"✅ Product ready SMS sent to +216{user.tel} for product {product.id}")
+            f"Product ready SMS sent to +216{user.tel} for product {product.id}")
         return True
     except Exception as e:
         logger.error(
@@ -230,7 +230,7 @@ def send_push_notification_for_product(user, product, facture):
         # Create FCM message
         message = messaging.Message(
             notification=messaging.Notification(
-                title="Your Product is Ready! 🎉",
+                title="Your Product is Ready!",
                 body=f"Quality: {product.get_quality_display()} • Facture: {facture.facture_number} • {facture.final_total} TND",
             ),
             token=user.fcm_token,
@@ -251,7 +251,7 @@ def send_push_notification_for_product(user, product, facture):
         # Send to FCM
         response = messaging.send(message)
         logger.info(
-            f"✅ Product ready FCM sent to user {user.id}, message_id={response}")
+            f"Product ready FCM sent to user {user.id}, message_id={response}")
 
         # Log to Firestore (optional)
         try:
@@ -263,7 +263,7 @@ def send_push_notification_for_product(user, product, facture):
                 'product_id': str(product.id),
                 'facture_id': str(facture.id),
                 'facture_number': facture.facture_number,
-                'title': "Your Product is Ready! 🎉",
+                'title': "Your Product is Ready!",
                 'body': f"Quality: {product.get_quality_display()} • Facture: {facture.facture_number} • {facture.final_total} TND",
                 'fcm_token': user.fcm_token,
                 'sent_at': firestore.SERVER_TIMESTAMP,
@@ -273,7 +273,7 @@ def send_push_notification_for_product(user, product, facture):
                 'notification_type': 'product_ready',
             })
             logger.info(
-                f"✅ Logged product ready notification to Firestore for user {user.id}")
+                f"Logged product ready notification to Firestore for user {user.id}")
         except Exception as firestore_error:
             logger.error(f"Error logging to Firestore: {str(firestore_error)}")
 
