@@ -11,6 +11,28 @@ import re
 User = get_user_model()
 
 
+def validate_cin_format(cin):
+    """
+    Validate CIN format to ensure it's 8 digits and doesn't contain
+    eight consecutive identical digits.
+    """
+    if not cin:
+        raise serializers.ValidationError("CIN is required")
+    
+    # Convert to string in case it's passed as integer
+    cin_str = str(cin)
+    
+    # Check if it's exactly 8 digits
+    if not cin_str.isdigit() or len(cin_str) != 8:
+        raise serializers.ValidationError("CIN must be exactly 8 digits")
+    
+    # Check for eight consecutive identical digits
+    if len(set(cin_str)) == 1:
+        raise serializers.ValidationError("CIN cannot contain eight identical digits")
+    
+    return cin_str
+
+
 def validate_email_domain(email):
     """
     Validate email domain against allowed domains.
@@ -147,6 +169,17 @@ class CustomUserSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Email already exists")
         return value
 
+    def validate_cin(self, value):
+        """Validate CIN format and uniqueness"""
+        if value:
+            # Apply format validation
+            value = validate_cin_format(value)
+            
+            # Check if CIN already exists
+            if CustomUser.objects.filter(cin=value).exists():
+                raise serializers.ValidationError("CIN already exists")
+        return value
+
     def create(self, validated_data):
         validated_data.setdefault('role', 'CLIENT')
         # If ville is not provided, it will use the model's default value
@@ -197,6 +230,17 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f"Invalid role. Allowed roles: {', '.join(valid_roles)}"
             )
+        return value
+
+    def validate_cin(self, value):
+        """Validate CIN format and uniqueness"""
+        if value:
+            # Apply format validation
+            value = validate_cin_format(value)
+            
+            # Check if CIN already exists
+            if CustomUser.objects.filter(cin=value).exists():
+                raise serializers.ValidationError("CIN already exists")
         return value
 
     def validate_ville(self, value):
@@ -256,6 +300,10 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
 
     def validate_cin(self, value):
         if value:
+            # Apply format validation
+            value = validate_cin_format(value)
+            
+            # Check if CIN already exists (excluding current instance)
             queryset = CustomUser.objects.filter(cin=value)
             if self.instance:
                 queryset = queryset.exclude(pk=self.instance.pk)
