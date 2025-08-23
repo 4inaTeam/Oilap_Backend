@@ -7,7 +7,7 @@ class FactureProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = ['id', 'quality', 'quantity',
-                  'price', 'origine', 'status', 'payement']
+                  'price', 'source', 'status', 'payement']
 
 
 class FactureSerializer(serializers.ModelSerializer):

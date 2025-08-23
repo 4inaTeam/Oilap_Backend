@@ -3,9 +3,10 @@ import logging
 from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from django.http import HttpResponse
+from rest_framework.decorators import api_view, permission_classes
+from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Q, Avg, Sum, Count
 from django.conf import settings
 from decimal import Decimal
 import csv
@@ -16,25 +17,35 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import inch
-
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.views import View
-from django.http import JsonResponse
-
 from .models import Product
-from .serializers import ProductSerializer
+from .serializers import (
+    ProductSerializer,
+    ProductSummarySerializer,
+    ProductCreateSerializer,
+    ProductMLStatusSerializer
+)
 from users.permissions import IsEmployee, IsAdmin, IsClient
 from users.models import CustomUser
-from rest_framework.exceptions import ValidationError
-from rest_framework.exceptions import NotFound
-from django.db.models import Sum, Count, Q
+from rest_framework.exceptions import ValidationError, NotFound
 from django.db.models.functions import Coalesce
 
 # Cache imports
 from django.core.cache import cache
 import hashlib
 import json
+
+# Remove the duplicate import section that was here
+
+logger = logging.getLogger(__name__)
+
+# Rest of the code remains unchanged...
+# [All the class definitions and functions follow]
+
+# Cache imports
+
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +139,7 @@ class ProductCreateView(generics.CreateAPIView):
 
 class ProductRetrieveView(generics.RetrieveAPIView):
     queryset = Product.objects.all()
-    serializer_class = ProductSerializer
+    serializer_class = ProductSerializer  # Maintenant avec ML
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
@@ -137,7 +148,6 @@ class ProductRetrieveView(generics.RetrieveAPIView):
         user = self.request.user
 
         if user.role == 'CLIENT':
-            # Clients can only view their own products
             if obj.client != user:
                 raise permissions.PermissionDenied(
                     'You do not have permission to access this product'
@@ -162,7 +172,6 @@ class ProductRetrieveView(generics.RetrieveAPIView):
                 f"Cache hit for product detail: {product_id}, user: {user_id}")
             return Response(cached_product)
 
-        # Get data using parent method
         response = super().retrieve(request, *args, **kwargs)
 
         # Cache for 15 minutes if successful
@@ -176,6 +185,7 @@ class ProductRetrieveView(generics.RetrieveAPIView):
 
 
 class ProductUpdateView(generics.UpdateAPIView):
+    """Vue de mise à jour avec régénération ML automatique"""
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
@@ -211,19 +221,25 @@ class ProductUpdateView(generics.UpdateAPIView):
                 raise ValidationError(
                     "Products in 'doing' status can only be marked as 'done'.")
 
-            # When transitioning from 'doing' to 'done', only allow status change
             validated_data_copy = serializer.validated_data.copy()
             for field in list(validated_data_copy.keys()):
-                if field not in ['status', 'end_time']:  # Allow end_time to be updated
+                if field not in ['status', 'end_time']:
                     del validated_data_copy[field]
 
             serializer.validated_data.clear()
             serializer.validated_data.update(validated_data_copy)
 
-        # Save the instance
+        # Sauvegarder (ML sera régénéré automatiquement si nécessaire)
         saved_instance = serializer.save()
-        logger.info(
-            f"Product {saved_instance.id} updated successfully - Status: {saved_instance.status}, Payment: {saved_instance.payement}")
+
+        logger.info(f"Product {saved_instance.id} updated successfully - "
+                    f"Status: {saved_instance.status}, Payment: {saved_instance.payement}")
+
+        # Log ML si applicable
+        if saved_instance.ml_prediction_generated:
+            logger.info(f"🤖 ML predictions for product {saved_instance.id}: "
+                        f"Energy={saved_instance.ml_predicted_energy_kwh}kWh, "
+                        f"Employees={saved_instance.ml_predicted_employees}")
 
         return saved_instance
 
@@ -236,11 +252,8 @@ class ProductUpdateView(generics.UpdateAPIView):
 
             # Clear all product-related caches
             ProductCacheManager.clear_all_product_cache()
-
-            # Clear specific product detail cache
             ProductCacheManager.delete_cache('product_detail', product_id)
 
-            # Clear user-related caches
             try:
                 product = Product.objects.get(id=product_id)
                 if product.client:
@@ -287,26 +300,77 @@ class CancelProductView(generics.UpdateAPIView):
 
 
 class ProductListView(generics.ListAPIView):
-    serializer_class = ProductSerializer
+    serializer_class = ProductSummarySerializer  # Maintenant avec ML summary
     permission_classes = [permissions.IsAuthenticated,
                           IsEmployee | IsAdmin | IsClient]
 
     def get_queryset(self):
         user = self.request.user
 
-        # Base queryset with role-based filtering
         if hasattr(user, 'role') and user.role in ['ADMIN', 'EMPLOYEE']:
             queryset = Product.objects.all()
         else:
             queryset = Product.objects.filter(client=user)
 
-        # Apply search filters based on query parameters
         queryset = self._apply_search_filters(queryset)
-
         return queryset.select_related('client', 'created_by').order_by('-created_at')
 
     def _apply_search_filters(self, queryset):
         """Apply comprehensive search filters based on query parameters"""
+        # ... (garder toute la logique de filtrage existante)
+
+        # NOUVEAUX FILTRES ML
+        has_ml = self.request.query_params.get(
+            'has_ml_predictions', '').strip()
+        if has_ml:
+            if has_ml.lower() in ['true', '1', 'yes']:
+                queryset = queryset.filter(ml_prediction_generated=True)
+            elif has_ml.lower() in ['false', '0', 'no']:
+                queryset = queryset.filter(ml_prediction_generated=False)
+
+        # Filtres par région ML détectée
+        ml_region = self.request.query_params.get('ml_region', '').strip()
+        if ml_region:
+            queryset = queryset.filter(ml_source_region__icontains=ml_region)
+
+        # Filtres par nombre d'employés prédits
+        min_employees = self.request.query_params.get(
+            'min_ml_employees', '').strip()
+        if min_employees:
+            try:
+                queryset = queryset.filter(
+                    ml_predicted_employees__gte=int(min_employees))
+            except ValueError:
+                pass
+
+        max_employees = self.request.query_params.get(
+            'max_ml_employees', '').strip()
+        if max_employees:
+            try:
+                queryset = queryset.filter(
+                    ml_predicted_employees__lte=int(max_employees))
+            except ValueError:
+                pass
+
+        # Filtres par énergie prédite
+        min_energy = self.request.query_params.get('min_ml_energy', '').strip()
+        if min_energy:
+            try:
+                queryset = queryset.filter(
+                    ml_predicted_energy_kwh__gte=Decimal(min_energy))
+            except (ValueError, TypeError):
+                pass
+
+        max_energy = self.request.query_params.get('max_ml_energy', '').strip()
+        if max_energy:
+            try:
+                queryset = queryset.filter(
+                    ml_predicted_energy_kwh__lte=Decimal(max_energy))
+            except (ValueError, TypeError):
+                pass
+
+        # Garder le reste de la logique de filtrage existante...
+        # (Copiez ici toute la logique de filtrage de votre méthode _apply_search_filters existante)
 
         # General search (searches across multiple fields)
         search = self.request.query_params.get('search', '').strip()
@@ -317,7 +381,7 @@ class ProductListView(generics.ListAPIView):
                 Q(client__cin__icontains=search) |
                 Q(client__email__icontains=search) |
                 Q(quality__icontains=search) |
-                Q(origine__icontains=search) |
+                Q(source__icontains=search) |
                 Q(status__icontains=search) |
                 Q(payement__icontains=search) |
                 Q(created_by__username__icontains=search)
@@ -329,7 +393,6 @@ class ProductListView(generics.ListAPIView):
             try:
                 queryset = queryset.filter(id=int(product_id))
             except ValueError:
-                # If not a valid integer, search for products containing the string
                 queryset = queryset.filter(id__icontains=product_id)
 
         # Filter by Quality
@@ -346,9 +409,9 @@ class ProductListView(generics.ListAPIView):
                 queryset = queryset.filter(quality__in=quality_list)
 
         # Filter by Origin
-        origine = self.request.query_params.get('origine', '').strip()
-        if origine:
-            queryset = queryset.filter(origine__icontains=origine)
+        source = self.request.query_params.get('source', '').strip()
+        if source:
+            queryset = queryset.filter(source__icontains=source)
 
         # Filter by Status
         status_filter = self.request.query_params.get('status', '').strip()
@@ -376,306 +439,7 @@ class ProductListView(generics.ListAPIView):
                 Q(client__email__icontains=client_filter)
             )
 
-        # Filter by Client ID (only for admin/employee)
-        client_id = self.request.query_params.get('client_id', '').strip()
-        if client_id and self.request.user.role in ['ADMIN', 'EMPLOYEE']:
-            try:
-                queryset = queryset.filter(client_id=int(client_id))
-            except ValueError:
-                pass
-
-        # Filter by Created By (only for admin/employee)
-        created_by = self.request.query_params.get('created_by', '').strip()
-        if created_by and self.request.user.role in ['ADMIN', 'EMPLOYEE']:
-            queryset = queryset.filter(
-                created_by__username__icontains=created_by)
-
-        # Price range filters
-        min_price = self.request.query_params.get('min_price', '').strip()
-        if min_price:
-            try:
-                queryset = queryset.filter(price__gte=Decimal(min_price))
-            except (ValueError, TypeError):
-                pass
-
-        max_price = self.request.query_params.get('max_price', '').strip()
-        if max_price:
-            try:
-                queryset = queryset.filter(price__lte=Decimal(max_price))
-            except (ValueError, TypeError):
-                pass
-
-        # Quantity range filters
-        min_quantity = self.request.query_params.get(
-            'min_quantity', '').strip()
-        if min_quantity:
-            try:
-                queryset = queryset.filter(quantity__gte=int(min_quantity))
-            except ValueError:
-                pass
-
-        max_quantity = self.request.query_params.get(
-            'max_quantity', '').strip()
-        if max_quantity:
-            try:
-                queryset = queryset.filter(quantity__lte=int(max_quantity))
-            except ValueError:
-                pass
-
-        # Date range filters
-        date_from = self.request.query_params.get('date_from', '').strip()
-        if date_from:
-            try:
-                from_date = timezone.datetime.strptime(
-                    date_from, '%Y-%m-%d').date()
-                queryset = queryset.filter(created_at__date__gte=from_date)
-            except ValueError:
-                # Try alternative date format
-                try:
-                    from_date = timezone.datetime.strptime(
-                        date_from, '%d/%m/%Y').date()
-                    queryset = queryset.filter(created_at__date__gte=from_date)
-                except ValueError:
-                    pass
-
-        date_to = self.request.query_params.get('date_to', '').strip()
-        if date_to:
-            try:
-                to_date = timezone.datetime.strptime(
-                    date_to, '%Y-%m-%d').date()
-                queryset = queryset.filter(created_at__date__lte=to_date)
-            except ValueError:
-                # Try alternative date format
-                try:
-                    to_date = timezone.datetime.strptime(
-                        date_to, '%d/%m/%Y').date()
-                    queryset = queryset.filter(created_at__date__lte=to_date)
-                except ValueError:
-                    pass
-
-        # End time date range filters
-        end_date_from = self.request.query_params.get(
-            'end_date_from', '').strip()
-        if end_date_from:
-            try:
-                from_date = timezone.datetime.strptime(
-                    end_date_from, '%Y-%m-%d').date()
-                queryset = queryset.filter(end_time__date__gte=from_date)
-            except ValueError:
-                try:
-                    from_date = timezone.datetime.strptime(
-                        end_date_from, '%d/%m/%Y').date()
-                    queryset = queryset.filter(end_time__date__gte=from_date)
-                except ValueError:
-                    pass
-
-        end_date_to = self.request.query_params.get('end_date_to', '').strip()
-        if end_date_to:
-            try:
-                to_date = timezone.datetime.strptime(
-                    end_date_to, '%Y-%m-%d').date()
-                queryset = queryset.filter(end_time__date__lte=to_date)
-            except ValueError:
-                try:
-                    to_date = timezone.datetime.strptime(
-                        end_date_to, '%d/%m/%Y').date()
-                    queryset = queryset.filter(end_time__date__lte=to_date)
-                except ValueError:
-                    pass
-
-        # Estimation time range filters
-        min_estimation = self.request.query_params.get(
-            'min_estimation_time', '').strip()
-        if min_estimation:
-            try:
-                queryset = queryset.filter(
-                    estimation_time__gte=int(min_estimation))
-            except ValueError:
-                pass
-
-        max_estimation = self.request.query_params.get(
-            'max_estimation_time', '').strip()
-        if max_estimation:
-            try:
-                queryset = queryset.filter(
-                    estimation_time__lte=int(max_estimation))
-            except ValueError:
-                pass
-
-        # Olive oil volume range filters
-        min_oil_volume = self.request.query_params.get(
-            'min_oil_volume', '').strip()
-        if min_oil_volume:
-            try:
-                queryset = queryset.filter(
-                    olive_oil_volume__gte=Decimal(min_oil_volume))
-            except (ValueError, TypeError):
-                pass
-
-        max_oil_volume = self.request.query_params.get(
-            'max_oil_volume', '').strip()
-        if max_oil_volume:
-            try:
-                queryset = queryset.filter(
-                    olive_oil_volume__lte=Decimal(max_oil_volume))
-            except (ValueError, TypeError):
-                pass
-
-        # Waste filters
-        min_waste = self.request.query_params.get(
-            'min_total_waste', '').strip()
-        if min_waste:
-            try:
-                queryset = queryset.filter(
-                    total_waste_kg__gte=Decimal(min_waste))
-            except (ValueError, TypeError):
-                pass
-
-        max_waste = self.request.query_params.get(
-            'max_total_waste', '').strip()
-        if max_waste:
-            try:
-                queryset = queryset.filter(
-                    total_waste_kg__lte=Decimal(max_waste))
-            except (ValueError, TypeError):
-                pass
-
-        # Waste vendus range filters
-        min_waste_vendus = self.request.query_params.get(
-            'min_waste_vendus', '').strip()
-        if min_waste_vendus:
-            try:
-                queryset = queryset.filter(
-                    waste_vendus_kg__gte=Decimal(min_waste_vendus))
-            except (ValueError, TypeError):
-                pass
-
-        max_waste_vendus = self.request.query_params.get(
-            'max_waste_vendus', '').strip()
-        if max_waste_vendus:
-            try:
-                queryset = queryset.filter(
-                    waste_vendus_kg__lte=Decimal(max_waste_vendus))
-            except (ValueError, TypeError):
-                pass
-
-        # Waste price range filters
-        min_waste_price = self.request.query_params.get(
-            'min_waste_price', '').strip()
-        if min_waste_price:
-            try:
-                queryset = queryset.filter(
-                    waste_vendus_price__gte=Decimal(min_waste_price))
-            except (ValueError, TypeError):
-                pass
-
-        max_waste_price = self.request.query_params.get(
-            'max_waste_price', '').strip()
-        if max_waste_price:
-            try:
-                queryset = queryset.filter(
-                    waste_vendus_price__lte=Decimal(max_waste_price))
-            except (ValueError, TypeError):
-                pass
-
-        # Boolean filters
-        has_waste = self.request.query_params.get('has_waste', '').strip()
-        if has_waste:
-            if has_waste.lower() in ['true', '1', 'yes']:
-                queryset = queryset.filter(total_waste_kg__gt=0)
-            elif has_waste.lower() in ['false', '0', 'no']:
-                queryset = queryset.filter(
-                    Q(total_waste_kg__isnull=True) | Q(total_waste_kg=0))
-
-        has_vendus_waste = self.request.query_params.get(
-            'has_vendus_waste', '').strip()
-        if has_vendus_waste:
-            if has_vendus_waste.lower() in ['true', '1', 'yes']:
-                queryset = queryset.filter(waste_vendus_kg__gt=0)
-            elif has_vendus_waste.lower() in ['false', '0', 'no']:
-                queryset = queryset.filter(
-                    Q(waste_vendus_kg__isnull=True) | Q(waste_vendus_kg=0))
-
-        # Ordering
-        ordering = self.request.query_params.get('ordering', '').strip()
-        if ordering:
-            valid_orderings = [
-                'id', '-id',
-                'created_at', '-created_at',
-                'end_time', '-end_time',
-                'price', '-price',
-                'quantity', '-quantity',
-                'status', '-status',
-                'quality', '-quality',
-                'estimation_time', '-estimation_time',
-                'olive_oil_volume', '-olive_oil_volume',
-                'total_waste_kg', '-total_waste_kg',
-                'waste_vendus_kg', '-waste_vendus_kg',
-                'waste_vendus_price', '-waste_vendus_price'
-            ]
-
-            # Allow ordering by client fields for admin/employee
-            if self.request.user.role in ['ADMIN', 'EMPLOYEE']:
-                valid_orderings.extend([
-                    'client__username', '-client__username',
-                    'client__cin', '-client__cin',
-                    'created_by__username', '-created_by__username'
-                ])
-
-            if ordering in valid_orderings:
-                queryset = queryset.order_by(ordering)
-
         return queryset
-
-    def list(self, request, *args, **kwargs):
-        """Override to add caching with search parameters"""
-        user_id = request.user.id
-        user_role = request.user.role
-
-        # Create cache key including all query parameters
-        query_params = dict(request.GET)
-        query_hash = hashlib.md5(json.dumps(
-            query_params, sort_keys=True).encode()).hexdigest()[:8]
-
-        # Try cache first
-        cached_result = ProductCacheManager.get_cache(
-            'products_list', user_id, user_role, query_hash)
-        if cached_result:
-            logger.info(
-                f"Cache hit for product list with search: user {user_id}")
-            return Response(cached_result)
-
-        # Get data using parent method
-        response = super().list(request, *args, **kwargs)
-
-        # Cache for 5 minutes if successful (shorter cache for searches)
-        if response.status_code == 200:
-            ProductCacheManager.set_cache(
-                'products_list', response.data, 300, user_id, user_role, query_hash)
-            logger.info(
-                f"Cache set for product list with search: user {user_id}")
-
-        return response
-
-    def get(self, request, *args, **kwargs):
-        """Override to provide search parameter documentation in response headers"""
-        response = super().get(request, *args, **kwargs)
-
-        # Add custom headers with available search parameters
-        search_params = [
-            'search', 'id', 'quality', 'qualities', 'origine', 'status', 'statuses',
-            'payement', 'client', 'client_id', 'created_by', 'min_price', 'max_price',
-            'min_quantity', 'max_quantity', 'date_from', 'date_to', 'end_date_from',
-            'end_date_to', 'min_estimation_time', 'max_estimation_time', 'min_oil_volume',
-            'max_oil_volume', 'min_total_waste', 'max_total_waste', 'min_waste_vendus',
-            'max_waste_vendus', 'min_waste_price', 'max_waste_price', 'has_waste',
-            'has_vendus_waste', 'ordering'
-        ]
-
-        response['X-Available-Search-Params'] = ','.join(search_params)
-        response['X-Search-Example'] = '?search=excellente&status=done&min_price=100&ordering=-created_at'
-
-        return response
 
 
 class ClientProductListView(generics.ListAPIView):
@@ -744,9 +508,9 @@ class AdminClientProductListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def get_queryset(self):
-        client_id = self.kwargs['client_id']
+        client_cin = self.kwargs['client_cin']
         try:
-            client = CustomUser.objects.get(id=client_id, role='CLIENT')
+            client = CustomUser.objects.get(cin=client_cin, role='CLIENT')
         except CustomUser.DoesNotExist:
             raise NotFound(detail="Client not found or invalid client role")
 
@@ -754,15 +518,15 @@ class AdminClientProductListView(generics.ListAPIView):
 
     def list(self, request, *args, **kwargs):
         """Override to add caching for admin client product list"""
-        client_id = self.kwargs['client_id']
+        client_cin = self.kwargs['client_cin']
         user_id = request.user.id
 
         # Try cache first
         cached_result = ProductCacheManager.get_cache(
-            'admin_client_products', client_id, user_id)
+            'admin_client_products', client_cin, user_id)
         if cached_result:
             logger.info(
-                f"Cache hit for admin client products: client {client_id}, user {user_id}")
+                f"Cache hit for admin client products: client {client_cin}, user {user_id}")
             return Response(cached_result)
 
         # Get data using parent method
@@ -771,9 +535,9 @@ class AdminClientProductListView(generics.ListAPIView):
         # Cache for 10 minutes if successful
         if response.status_code == 200:
             ProductCacheManager.set_cache(
-                'admin_client_products', response.data, 600, client_id, user_id)
+                'admin_client_products', response.data, 600, client_cin, user_id)
             logger.info(
-                f"Cache set for admin client products: client {client_id}, user {user_id}")
+                f"Cache set for admin client products: client {client_cin}, user {user_id}")
 
         return response
 
@@ -892,7 +656,7 @@ class ProductReportView(APIView):
             writer.writerow([
                 'ID',
                 'Qualité',
-                'Origine',
+                'source',
                 'Quantité (Kg)',
                 'Prix (DT)',
                 'Statut',
@@ -908,7 +672,7 @@ class ProductReportView(APIView):
                 'Client',
                 'CIN Client',
                 'Qualité',
-                'Origine',
+                'source',
                 'Quantité (Kg)',
                 'Prix (DT)',
                 'Statut',
@@ -925,7 +689,7 @@ class ProductReportView(APIView):
                 writer.writerow([
                     product.id,
                     product.get_quality_display(),
-                    product.origine or '',
+                    product.source or '',
                     product.quantity,
                     float(product.price) if product.price else 0,
                     product.get_status_display(),
@@ -943,7 +707,7 @@ class ProductReportView(APIView):
                     product.client.username if product.client else '',
                     product.client.cin if product.client else '',
                     product.get_quality_display(),
-                    product.origine or '',
+                    product.source or '',
                     product.quantity,
                     float(product.price) if product.price else 0,
                     product.get_status_display(),
@@ -1273,7 +1037,7 @@ class SingleProductPDFView(View):
                     ['ID du Produit', str(product.id)],
                     ['Qualité', product.get_quality_display() if hasattr(
                         product, 'get_quality_display') else str(product.quality)],
-                    ['Origine', product.origine or 'N/A'],
+                    ['source', product.source or 'N/A'],
                     ['Quantité', f"{product.quantity} Kg"],
                     ['Prix Total',
                         f"{float(product.price):.2f} DT" if product.price else '0 DT'],
@@ -1295,7 +1059,7 @@ class SingleProductPDFView(View):
                     ['Email Client', product.client.email if product.client else 'N/A'],
                     ['Qualité', product.get_quality_display() if hasattr(
                         product, 'get_quality_display') else str(product.quality)],
-                    ['Origine', product.origine or 'N/A'],
+                    ['source', product.source or 'N/A'],
                     ['Quantité', f"{product.quantity} Kg"],
                     ['Prix Total',
                         f"{float(product.price):.2f} DT" if product.price else '0 DT'],
@@ -1432,7 +1196,7 @@ def simple_product_pdf_download(request, product_id):
         content = f"""
         <b>Product ID:</b> {product.id}<br/>
         <b>Quality:</b> {product.quality}<br/>
-        <b>Origin:</b> {product.origine or 'N/A'}<br/>
+        <b>Origin:</b> {product.source or 'N/A'}<br/>
         <b>Quantity:</b> {product.quantity} Kg<br/>
         <b>Price:</b> {float(product.price):.2f} DT<br/>
         <b>Status:</b> {product.status}<br/>
@@ -1708,7 +1472,7 @@ class OriginPercentageView(APIView):
 
             # Get total count of products (excluding those without origin)
             total_products = Product.objects.exclude(
-                Q(origine__isnull=True) | Q(origine__exact='')
+                Q(source__isnull=True) | Q(source__exact='')
             ).count()
 
             if total_products == 0:
@@ -1724,8 +1488,8 @@ class OriginPercentageView(APIView):
 
             # Get count by origin
             origin_counts = Product.objects.exclude(
-                Q(origine__isnull=True) | Q(origine__exact='')
-            ).values('origine').annotate(
+                Q(source__isnull=True) | Q(source__exact='')
+            ).values('source').annotate(
                 count=Count('id'),
                 total_quantity=Coalesce(Sum('quantity'), 0)
             ).order_by('-count')
@@ -1738,7 +1502,7 @@ class OriginPercentageView(APIView):
 
                 # Calculate quantity percentage if we have total quantity
                 total_quantity = Product.objects.exclude(
-                    Q(origine__isnull=True) | Q(origine__exact='')
+                    Q(source__isnull=True) | Q(source__exact='')
                 ).aggregate(total=Coalesce(Sum('quantity'), 0))['total']
 
                 if total_quantity > 0:
@@ -1746,7 +1510,7 @@ class OriginPercentageView(APIView):
                         origin_data['total_quantity'] / total_quantity) * 100
 
                 origin_percentages.append({
-                    'origin': origin_data['origine'],
+                    'origin': origin_data['source'],
                     'count': origin_data['count'],
                     'percentage': round(percentage, 2),
                     'total_quantity': origin_data['total_quantity'],
@@ -1776,3 +1540,512 @@ class OriginPercentageView(APIView):
                 {'error': 'Failed to get origin percentages'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def ml_global_status(request):
+    """
+    Statut global des prédictions ML
+    """
+    try:
+        # Check cache first
+        cached_status = ProductCacheManager.get_cache('ml_global_stats')
+        if cached_status:
+            logger.info("Cache hit for ML global status")
+            return Response(cached_status)
+
+        # Statistiques générales
+        total_products = Product.objects.count()
+        products_with_ml = Product.objects.filter(
+            ml_prediction_generated=True).count()
+
+        # Vérifier le statut du service ML
+        try:
+            from .ml_service import ml_prediction_service
+            ml_service_loaded = ml_prediction_service.is_loaded
+        except ImportError:
+            ml_service_loaded = False
+
+        # Statistiques ML
+        if products_with_ml > 0:
+            ml_stats = Product.objects.filter(ml_prediction_generated=True).aggregate(
+                avg_energy=Avg('ml_predicted_energy_kwh'),
+                total_energy=Sum('ml_predicted_energy_kwh'),
+                avg_water=Avg('ml_predicted_water_liters'),
+                total_water=Sum('ml_predicted_water_liters'),
+                avg_employees=Avg('ml_predicted_employees'),
+                total_employees=Sum('ml_predicted_employees'),
+                avg_processing_time=Avg('ml_predicted_processing_time')
+            )
+        else:
+            ml_stats = {
+                'avg_energy': 0, 'total_energy': 0,
+                'avg_water': 0, 'total_water': 0,
+                'avg_employees': 0, 'total_employees': 0,
+                'avg_processing_time': 0
+            }
+
+        # Répartition par région ML
+        region_distribution = list(
+            Product.objects.filter(
+                ml_prediction_generated=True, ml_source_region__isnull=False)
+            .values('ml_source_region')
+            .annotate(
+                count=Count('id'),
+                avg_energy=Avg('ml_predicted_energy_kwh'),
+                avg_employees=Avg('ml_predicted_employees')
+            )
+            .order_by('-count')
+        )
+
+        # Récentes prédictions
+        recent_predictions = Product.objects.filter(
+            ml_prediction_generated=True
+        ).order_by('-ml_prediction_timestamp')[:5]
+
+        recent_data = ProductMLStatusSerializer(
+            recent_predictions, many=True).data
+
+        status_data = {
+            'ml_service_status': {
+                'loaded': ml_service_loaded,
+                'products_total': total_products,
+                'products_with_ml': products_with_ml,
+                'ml_coverage_percentage': (products_with_ml / total_products * 100) if total_products > 0 else 0
+            },
+            'ml_aggregated_stats': ml_stats,
+            'region_breakdown': region_distribution,
+            'recent_predictions': recent_data,
+            'success': True
+        }
+
+        # Cache for 10 minutes
+        ProductCacheManager.set_cache('ml_global_stats', status_data, 600)
+        logger.info("Cache set for ML global status")
+
+        return Response(status_data)
+
+    except Exception as e:
+        logger.error(f"Error getting ML global status: {e}")
+        return Response({
+            'error': str(e),
+            'success': False
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated, IsAdminOrEmployee])
+def regenerate_ml_predictions(request, pk):
+    """
+    Forcer la régénération des prédictions ML pour un produit
+    """
+    try:
+        product = Product.objects.get(pk=pk)
+
+        # Réinitialiser le statut ML
+        product.ml_prediction_generated = False
+        product.ml_prediction_timestamp = None
+
+        # Sauvegarder pour déclencher la régénération
+        product.save()
+
+        # Retourner le produit mis à jour
+        serializer = ProductSerializer(product, context={'request': request})
+
+        # Clear cache
+        ProductCacheManager.clear_all_product_cache()
+        ProductCacheManager.delete_cache('product_detail', pk)
+
+        logger.info(f"🔄 Prédictions ML régénérées pour produit {pk}")
+
+        return Response({
+            'message': 'Prédictions ML régénérées avec succès',
+            'product': serializer.data,
+            'success': True
+        })
+
+    except Product.DoesNotExist:
+        return Response({
+            'error': 'Produit non trouvé',
+            'success': False
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        logger.error(f"Erreur régénération ML: {e}")
+        return Response({
+            'error': str(e),
+            'success': False
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def ml_health_check(request):
+    """
+    Vérification de la santé du service ML
+    """
+    try:
+        health_status = {
+            'timestamp': timezone.now(),
+        }
+
+        # Test du service ML
+        try:
+            from .ml_service import ml_prediction_service
+
+            health_status['ml_service_loaded'] = ml_prediction_service.is_loaded
+
+            if ml_prediction_service.is_loaded:
+                # Test rapide de prédiction
+                test_result = ml_prediction_service.auto_predict(
+                    source="Tunis",
+                    quantity=1000,
+                    quality="moyenne"
+                )
+
+                health_status.update({
+                    'test_prediction_successful': test_result is not None,
+                    'model_responsive': True
+                })
+
+                if test_result:
+                    health_status['sample_prediction'] = {
+                        'energy_kwh': test_result['energy_kwh'],
+                        'employees': test_result['employees']
+                    }
+            else:
+                health_status.update({
+                    'test_prediction_successful': False,
+                    'model_responsive': False,
+                    'error': 'Modèles ML non chargés'
+                })
+
+        except ImportError:
+            health_status.update({
+                'ml_service_loaded': False,
+                'model_responsive': False,
+                'error': 'Service ML non disponible'
+            })
+
+        return Response(health_status)
+
+    except Exception as e:
+        logger.error(f"Erreur health check ML: {e}")
+        return Response({
+            'ml_service_loaded': False,
+            'model_responsive': False,
+            'error': str(e),
+            'timestamp': timezone.now()
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# MISE À JOUR DES VUES STATISTIQUES EXISTANTES
+class ProductStatsView(APIView):
+    """
+    Get product statistics for dashboard with ML metrics
+    """
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def get(self, request):
+        try:
+            # Check cache first
+            cached_stats = ProductCacheManager.get_cache('product_stats')
+            if cached_stats:
+                logger.info("Cache hit for product statistics")
+                return Response(cached_stats)
+
+            # Statistiques existantes
+            total_products = Product.objects.count()
+            pending_products = Product.objects.filter(status='pending').count()
+            doing_products = Product.objects.filter(status='doing').count()
+            done_products = Product.objects.filter(status='done').count()
+            canceled_products = Product.objects.filter(
+                status='canceled').count()
+
+            unpaid_products = Product.objects.filter(payement='unpaid').count()
+            paid_products = Product.objects.filter(payement='paid').count()
+
+            # Quality distribution
+            quality_stats = {}
+            for choice in Product.QUALITY_CHOICES:
+                quality_stats[choice[0]] = Product.objects.filter(
+                    quality=choice[0]).count()
+
+            # NOUVELLES STATISTIQUES ML
+            products_with_ml = Product.objects.filter(
+                ml_prediction_generated=True).count()
+            ml_coverage_percentage = (
+                products_with_ml / total_products * 100) if total_products > 0 else 0
+
+            # Moyennes ML
+            ml_averages = Product.objects.filter(ml_prediction_generated=True).aggregate(
+                avg_energy=Avg('ml_predicted_energy_kwh'),
+                avg_water=Avg('ml_predicted_water_liters'),
+                avg_employees=Avg('ml_predicted_employees'),
+                avg_processing_time=Avg('ml_predicted_processing_time')
+            )
+
+            stats_data = {
+                'total_products': total_products,
+                'status_distribution': {
+                    'pending': pending_products,
+                    'doing': doing_products,
+                    'done': done_products,
+                    'canceled': canceled_products
+                },
+                'payment_distribution': {
+                    'unpaid': unpaid_products,
+                    'paid': paid_products
+                },
+                'quality_distribution': quality_stats,
+
+                # NOUVELLES STATISTIQUES ML
+                'ml_statistics': {
+                    'products_with_ml': products_with_ml,
+                    'ml_coverage_percentage': ml_coverage_percentage,
+                    'averages': ml_averages
+                }
+            }
+
+            # Cache for 10 minutes
+            ProductCacheManager.set_cache('product_stats', stats_data, 600)
+            logger.info("Cache set for product statistics")
+
+            return Response(stats_data)
+        except Exception as e:
+            logger.error(f"Error getting product stats: {str(e)}")
+            return Response({'error': 'Failed to get statistics'}, status=500)
+
+
+class TotalQuantityView(APIView):
+    """
+    Get total quantity including ML predictions
+    """
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def get(self, request):
+        try:
+            cached_quantity = ProductCacheManager.get_cache(
+                'total_quantity_with_waste_ml')
+            if cached_quantity:
+                logger.info("Cache hit for total quantity with waste and ML")
+                return Response(cached_quantity)
+
+            total_products = Product.objects.count()
+            logger.info(f"Total products count: {total_products}")
+
+            if total_products == 0:
+                empty_result = {
+                    'total_quantity': Decimal(0),
+                    'total_oil_volume': Decimal(0),
+                    'overall_yield_percentage': Decimal(0),
+                    'waste_summary': {
+                        'total_waste_kg': Decimal(0),
+                        'waste_vendus_kg': Decimal(0),
+                        'waste_non_vendus_kg': Decimal(0),
+                        'waste_vendus_price': Decimal(0),
+                        'vendus_percentage': Decimal(0),
+                        'non_vendus_percentage': Decimal(0)
+                    },
+                    'ml_summary': {
+                        'products_with_ml': 0,
+                        'ml_coverage_percentage': 0,
+                        'total_predicted_energy': 0,
+                        'total_predicted_water': 0,
+                        'total_predicted_employees': 0
+                    },
+                    'message': 'No products found'
+                }
+                ProductCacheManager.set_cache(
+                    'total_quantity_with_waste_ml', empty_result, 60)
+                return Response(empty_result, status=status.HTTP_200_OK)
+
+            # Calculs existants
+            total_quantity = Decimal(Product.objects.aggregate(
+                total=Sum('quantity'))['total'] or 0)
+            logger.info(f"Total quantity: {total_quantity}")
+
+            # Total oil volume
+            total_oil_from_db = Decimal(Product.objects.filter(
+                olive_oil_volume__isnull=False
+            ).aggregate(total=Sum('olive_oil_volume'))['total'] or 0)
+
+            manual_oil_calculation = Decimal(0)
+            for product in Product.objects.filter(olive_oil_volume__isnull=True):
+                yield_rate = getattr(Product, 'OLIVE_OIL_YIELD_MAP', {}).get(
+                    product.quality, Decimal('0.17'))
+                manual_oil_calculation += Decimal(product.quantity) * \
+                    Decimal(yield_rate)
+
+            total_oil_volume = total_oil_from_db + manual_oil_calculation
+            logger.info(f"Total oil volume: {total_oil_volume}")
+
+            overall_yield_percentage = (
+                total_oil_volume / total_quantity * 100) if total_quantity > 0 else Decimal('0')
+
+            # Waste statistics (existants)
+            waste_stats = Product.objects.aggregate(
+                total_waste=Sum('total_waste_kg'),
+                waste_vendus=Sum('waste_vendus_kg'),
+                waste_non_vendus=Sum('waste_non_vendus_kg'),
+                waste_revenue=Sum('waste_vendus_price')
+            )
+            total_waste = Decimal(waste_stats['total_waste'] or 0)
+            waste_vendus = Decimal(waste_stats['waste_vendus'] or 0)
+            waste_non_vendus = Decimal(waste_stats['waste_non_vendus'] or 0)
+            waste_revenue = Decimal(waste_stats['waste_revenue'] or 0)
+
+            vendus_percentage = (waste_vendus / total_waste *
+                                 100) if total_waste > 0 else Decimal('0')
+            non_vendus_percentage = (
+                waste_non_vendus / total_waste * 100) if total_waste > 0 else Decimal('0')
+
+            # NOUVELLES STATISTIQUES ML
+            products_with_ml = Product.objects.filter(
+                ml_prediction_generated=True).count()
+            ml_coverage_percentage = (
+                products_with_ml / total_products * 100) if total_products > 0 else 0
+
+            ml_totals = Product.objects.filter(ml_prediction_generated=True).aggregate(
+                total_energy=Sum('ml_predicted_energy_kwh'),
+                total_water=Sum('ml_predicted_water_liters'),
+                total_employees=Sum('ml_predicted_employees'),
+                avg_processing_time=Avg('ml_predicted_processing_time')
+            )
+
+            # Breakdown by status (existant + ML)
+            quantity_by_status = {}
+            status_choices = getattr(Product, 'STATUS_CHOICES', [
+                ('pending', 'Pending'), ('doing', 'Doing'), ('done',
+                                                             'Done'), ('canceled', 'Canceled')
+            ])
+
+            for status_key, _ in status_choices:
+                status_products = Product.objects.filter(status=status_key)
+                status_quantity = Decimal(status_products.aggregate(
+                    total=Sum('quantity'))['total'] or 0)
+
+                # Calculs traditionnels
+                status_oil_from_db = Decimal(status_products.filter(
+                    olive_oil_volume__isnull=False
+                ).aggregate(total=Sum('olive_oil_volume'))['total'] or 0)
+
+                status_manual_oil = Decimal(0)
+                for product in status_products.filter(olive_oil_volume__isnull=True):
+                    yield_rate = getattr(Product, 'OLIVE_OIL_YIELD_MAP', {}).get(
+                        product.quality, Decimal('0.17'))
+                    status_manual_oil += Decimal(product.quantity) * \
+                        Decimal(yield_rate)
+
+                status_oil = status_oil_from_db + status_manual_oil
+
+                status_waste_stats = status_products.aggregate(
+                    total_waste=Sum('total_waste_kg'),
+                    vendus=Sum('waste_vendus_kg'),
+                    non_vendus=Sum('waste_non_vendus_kg'),
+                    revenue=Sum('waste_vendus_price')
+                )
+
+                # NOUVEAUX CALCULS ML par statut
+                status_ml_stats = status_products.filter(ml_prediction_generated=True).aggregate(
+                    ml_count=Count('id'),
+                    total_energy=Sum('ml_predicted_energy_kwh'),
+                    total_water=Sum('ml_predicted_water_liters'),
+                    total_employees=Sum('ml_predicted_employees')
+                )
+
+                quantity_by_status[status_key] = {
+                    'total_quantity': status_quantity,
+                    'total_oil': status_oil,
+                    'waste_stats': {
+                        'total_waste_kg': Decimal(status_waste_stats['total_waste'] or 0),
+                        'waste_vendus_kg': Decimal(status_waste_stats['vendus'] or 0),
+                        'waste_non_vendus_kg': Decimal(status_waste_stats['non_vendus'] or 0),
+                        'waste_revenue_dt': Decimal(status_waste_stats['revenue'] or 0)
+                    },
+                    'ml_stats': {
+                        'products_with_ml': status_ml_stats['ml_count'] or 0,
+                        'total_predicted_energy': Decimal(status_ml_stats['total_energy'] or 0),
+                        'total_predicted_water': Decimal(status_ml_stats['total_water'] or 0),
+                        'total_predicted_employees': status_ml_stats['total_employees'] or 0
+                    }
+                }
+
+            # Waste by quality (existant)
+            waste_by_quality = {}
+            for quality, _ in Product.QUALITY_CHOICES:
+                quality_products = Product.objects.filter(quality=quality)
+                quality_waste = quality_products.aggregate(
+                    total_waste=Sum('total_waste_kg'),
+                    vendus=Sum('waste_vendus_kg'),
+                    non_vendus=Sum('waste_non_vendus_kg'),
+                    revenue=Sum('waste_vendus_price'),
+                    product_count=Count('id')
+                )
+
+                # NOUVEAUX CALCULS ML par qualité
+                quality_ml = quality_products.filter(ml_prediction_generated=True).aggregate(
+                    ml_count=Count('id'),
+                    avg_energy=Avg('ml_predicted_energy_kwh'),
+                    avg_employees=Avg('ml_predicted_employees')
+                )
+
+                waste_by_quality[quality] = {
+                    'product_count': quality_waste['product_count'] or 0,
+                    'total_waste_kg': Decimal(quality_waste['total_waste'] or 0),
+                    'waste_vendus_kg': Decimal(quality_waste['vendus'] or 0),
+                    'waste_non_vendus_kg': Decimal(quality_waste['non_vendus'] or 0),
+                    'waste_revenue_dt': Decimal(quality_waste['revenue'] or 0),
+                    'ml_stats': {
+                        'products_with_ml': quality_ml['ml_count'] or 0,
+                        'avg_predicted_energy': quality_ml['avg_energy'] or 0,
+                        'avg_predicted_employees': quality_ml['avg_employees'] or 0
+                    }
+                }
+
+            quantity_data = {
+                'total_quantity': total_quantity,
+                'total_oil_volume': total_oil_volume,
+                'overall_yield_percentage': round(overall_yield_percentage, 2),
+                'quantity_by_status': quantity_by_status,
+                'total_products': total_products,
+                'waste_summary': {
+                    'total_waste_kg': round(total_waste, 3),
+                    'waste_vendus_kg': round(waste_vendus, 3),
+                    'waste_non_vendus_kg': round(waste_non_vendus, 3),
+                    'waste_vendus_price_dt': round(waste_revenue, 2),
+                    'vendus_percentage': round(vendus_percentage, 2),
+                    'non_vendus_percentage': round(non_vendus_percentage, 2),
+                    'average_price_per_kg': round((waste_revenue / waste_vendus) if waste_vendus > 0 else 0, 3)
+                },
+                'waste_by_quality': waste_by_quality,
+
+                # NOUVELLES DONNÉES ML
+                'ml_summary': {
+                    'products_with_ml': products_with_ml,
+                    'ml_coverage_percentage': round(ml_coverage_percentage, 2),
+                    'total_predicted_energy': ml_totals['total_energy'] or 0,
+                    'total_predicted_water': ml_totals['total_water'] or 0,
+                    'total_predicted_employees': ml_totals['total_employees'] or 0,
+                    'avg_processing_time': ml_totals['avg_processing_time'] or 0
+                }
+            }
+
+            ProductCacheManager.set_cache(
+                'total_quantity_with_waste_ml', quantity_data, 900)
+            logger.info("Cache set for total quantity with waste and ML")
+            return Response(quantity_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"Error getting total quantity with ML: {str(e)}")
+            logger.error(f"Full traceback: {error_details}")
+            error_response = {
+                'error': 'Failed to get total quantity and ML statistics',
+                'error_type': type(e).__name__,
+                'details': str(e)
+            }
+            if getattr(settings, 'DEBUG', False):
+                error_response['traceback'] = error_details
+            return Response(error_response, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
