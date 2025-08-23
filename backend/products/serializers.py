@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    # Champs existants - NOMS CORRIGÉS pour Flutter
     client_name = serializers.CharField(
         source='client.username', read_only=True)
     client_cin = serializers.CharField(
@@ -23,7 +22,6 @@ class ProductSerializer(serializers.ModelSerializer):
         slug_field='username', read_only=True)
     end_time = serializers.DateTimeField(read_only=True)
 
-    # Calculs traditionnels (existants)
     olive_oil_volume = serializers.DecimalField(
         max_digits=10, decimal_places=3, read_only=True)
     oil_efficiency_percentage = serializers.SerializerMethodField()
@@ -42,7 +40,6 @@ class ProductSerializer(serializers.ModelSerializer):
     waste_price_per_kg = serializers.SerializerMethodField()
     waste_sold_percentage_rule = serializers.SerializerMethodField()
 
-    # NOUVEAUX CHAMPS ML (automatiques)
     ml_predictions = serializers.SerializerMethodField()
     ml_efficiency_metrics = serializers.SerializerMethodField()
     has_ml_predictions = serializers.BooleanField(
