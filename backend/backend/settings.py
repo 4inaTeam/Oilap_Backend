@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     'tickets',
     'bills',
     'corsheaders',
+    'predict',
 ]
 
 MIDDLEWARE = [
@@ -241,7 +242,7 @@ STATICFILES_DIRS = [
 ]
 
 if os.environ.get('RENDER'):
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')  
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
     if RENDER_EXTERNAL_HOSTNAME:
         MEDIA_URL = f'https://{RENDER_EXTERNAL_HOSTNAME}/uploads/'
@@ -260,7 +261,7 @@ if os.environ.get('RENDER'):
         DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
 else:
-    MEDIA_ROOT = os.path.join(BASE_DIR, 'media') 
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
     MEDIA_URL = '/uploads/'
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
@@ -294,7 +295,7 @@ CONFIDENCE_THRESHOLD = 0.7
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = ('png', 'jpg', 'jpeg')
 
-CORS_ALLOW_ALL_ORIGINS = True 
+CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",

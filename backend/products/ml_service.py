@@ -1,5 +1,3 @@
-# products/ml_service.py - VERSION CORRIGÉE
-
 import os
 import pickle
 import joblib

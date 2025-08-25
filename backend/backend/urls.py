@@ -27,9 +27,12 @@ urlpatterns = [
     ])),
 
     path('api/tickets/', include('tickets.urls')),
-
     path('api/users/', include('users.urls')),
     path('api/products/', include('products.urls')),
+
+    # NEW: ML Prediction API
+    path('api/predict/', include('predict.urls')),
+
     path('api/auth/password/reset/', include('django_rest_passwordreset.urls')),
     path('api/', include('factures.urls')),
     path('api/', include('payments.urls')),
@@ -45,11 +48,9 @@ urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
 
 if settings.DEBUG:
-
     urlpatterns += static(settings.MEDIA_URL,
                           document_root=settings.MEDIA_ROOT)
 else:
-
     urlpatterns += [
         re_path(r'^uploads/(?P<path>.*)$', serve, {
             'document_root': settings.MEDIA_ROOT,
@@ -84,7 +85,3 @@ if settings.DEBUG:
                 media_info['media_scan_error'] = str(e)
 
         return JsonResponse(media_info)
-
-
-
-
