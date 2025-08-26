@@ -173,8 +173,7 @@ class CustomUser(AbstractUser):
 
     isActive = models.BooleanField(default=True)
 
-    # Enhanced FCM token field
-    fcm_token = models.TextField(  # Changed from CharField to TextField for longer tokens
+    fcm_token = models.TextField(  
         blank=True,
         null=True,
         verbose_name=_("FCM Device Token"),

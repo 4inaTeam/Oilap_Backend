@@ -1048,7 +1048,7 @@ def prediction_metrics(request):
             metrics['cache_statistics'] = {
                 'backend': cache.__class__.__name__,
                 'test_successful': cache_test == 'test',
-                'estimated_keys': 'N/A'  # Most cache backends don't provide this easily
+                'estimated_keys': 'N/A'  
             }
         except Exception as e:
             metrics['cache_statistics'] = {'error': str(e)}
@@ -1146,7 +1146,6 @@ def batch_prediction(request):
                     'success': False
                 })
 
-        # Calculate summary statistics
         successful_results = [
             r for r in batch_results['results'] if r['success']]
         batch_results['summary'] = {
