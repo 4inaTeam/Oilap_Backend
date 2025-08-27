@@ -1,0 +1,68 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_IMAGE = "oussamachercheri/oil-app-backend"
+        DOCKER_TAG = "${BUILD_NUMBER}"
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                echo '🔄 Checking out backend code...'
+                checkout scm
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo '🏗️ Building Docker image for backend...'
+                    def image = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
+                    echo '✅ Backend image built successfully!'
+                }
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                script {
+                    echo '🧪 Running backend tests...'
+                    docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}").inside {
+                        sh 'python manage.py test'
+                    }
+                    echo '✅ Backend tests passed!'
+                }
+            }
+        }
+        
+        stage('Push to DockerHub') {
+            steps {
+                script {
+                    echo '📤 Pushing backend image to DockerHub...'
+                    docker.withRegistry('https://registry.hub.docker.com', 'dockerhub-credentials') {
+                        docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}").push()
+                        docker.image("${DOCKER_IMAGE}:${DOCKER_TAG}").push("latest")
+                    }
+                    echo '✅ Backend image pushed successfully!'
+                }
+            }
+        }
+        
+        stage('Deploy Notification') {
+            steps {
+                echo '🎉 Backend deployment ready!'
+                echo "Backend image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '🎉 Backend pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ Backend pipeline failed!'
+        }
+    }
+}

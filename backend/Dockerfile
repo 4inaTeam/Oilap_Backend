@@ -1,43 +1,36 @@
-# Backend Dockerfile
+# Use Python 3.11 slim image
 FROM python:3.11-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
 
 # Set work directory
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    libpq-dev \
+    gcc \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy requirements first for better caching
+COPY requirements.txt /app/
+
 # Install Python dependencies
-COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project
-COPY . .
-
-# Create static files directory
-RUN mkdir -p staticfiles
+COPY . /app/
 
 # Collect static files
-RUN python manage.py collectstatic --no-input
+RUN python manage.py collectstatic --noinput
 
-# Create non-root user
-RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
-USER appuser
+# Create superuser script
+COPY create_superuser.py /app/
 
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health/ || exit 1
-
-# Start command
-CMD ["sh", "-c", "python create_superuser.py && gunicorn backend.wsgi:application --bind 0.0.0.0:$PORT"]
+# Run the application
+CMD ["sh", "-c", "python create_superuser.py && gunicorn backend.wsgi:application --bind 0.0.0.0:8000"]
