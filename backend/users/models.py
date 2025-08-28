@@ -106,6 +106,7 @@ class CustomUser(AbstractUser):
         ('ADMIN', 'Admin'),
         ('EMPLOYEE', 'Employee'),
         ('ACCOUNTANT', 'Accountant'),
+        ('EXPERT_COMPTABLE', 'Expert Comptable'),
         ('CLIENT', 'Client'),
     ]
 

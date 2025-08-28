@@ -225,7 +225,7 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_role(self, value):
-        valid_roles = ['EMPLOYEE', 'ACCOUNTANT']
+        valid_roles = ['EMPLOYEE', 'ACCOUNTANT', 'EXPERT_COMPTABLE']
         if value not in valid_roles:
             raise serializers.ValidationError(
                 f"Invalid role. Allowed roles: {', '.join(valid_roles)}"

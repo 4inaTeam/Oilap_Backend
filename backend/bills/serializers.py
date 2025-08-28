@@ -1,7 +1,7 @@
 # bills/serializers.py
 from rest_framework import serializers
 from django.conf import settings
-from .models import Bill, Item
+from .models import Bill, Item, Bilan
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -208,3 +208,49 @@ class BillListSerializer(serializers.ModelSerializer):
 
     def get_items_count(self, obj):
         return obj.items.count() if obj.category == 'purchase' else 0
+
+
+class BilanSerializer(serializers.ModelSerializer):
+    created_by_info = UserInfoSerializer(source='created_by', read_only=True)
+
+    class Meta:
+        model = Bilan
+        fields = '__all__'
+        read_only_fields = ('created_by', 'created_by_info', 'created_at', 'updated_at')
+
+    def to_representation(self, instance):
+        """
+        Override to return absolute URLs for image and PDF fields
+        """
+        representation = super().to_representation(instance)
+        
+        # Replace image and PDF fields with absolute URLs
+        if instance.original_image:
+            representation['original_image'] = instance.get_absolute_image_url()
+        else:
+            representation['original_image'] = None
+            
+        if instance.pdf_file:
+            representation['pdf_file'] = instance.get_absolute_pdf_url()
+        else:
+            representation['pdf_file'] = None
+            
+        return representation
+
+    def validate(self, data):
+        if data.get('date_entree') and data.get('date_sortie'):
+            if data['date_entree'] >= data['date_sortie']:
+                raise serializers.ValidationError(
+                    "Date d'entrée must be before date de sortie"
+                )
+        return data
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        if request and request.user:
+            validated_data['created_by'] = request.user
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # Update bilan fields
+        return super().update(instance, validated_data)
