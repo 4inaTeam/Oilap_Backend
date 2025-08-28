@@ -20,6 +20,7 @@ from .views import (
     regenerate_ml_predictions,
     ml_health_check,
 )
+from predict.views import generate_prediction_pdf
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -56,6 +57,9 @@ urlpatterns = [
     path('ml-health/', ml_health_check, name='ml-health-check'),
     path('<int:pk>/regenerate-ml/', regenerate_ml_predictions,
          name='regenerate-ml-predictions'),
+
+    # PDF report endpoint
+    path('<int:product_id>/pdf-report/', generate_prediction_pdf, name='product-pdf-report'),
 
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 

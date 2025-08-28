@@ -4,7 +4,7 @@ from django.db.models import Q, Sum, Count, Case, When, DecimalField
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse, Http404
 from django.contrib.auth import get_user_model
@@ -999,14 +999,15 @@ class BillPDFViewView(APIView):
             )
 
 
-class IsExpertComptable:
+class IsExpertComptable(BasePermission):
     """
     Custom permission class to check if user is Expert Comptable
     """
+
     def has_permission(self, request, view):
-        return (request.user and 
-                request.user.is_authenticated and 
-                hasattr(request.user, 'role') and 
+        return (request.user and
+                request.user.is_authenticated and
+                hasattr(request.user, 'role') and
                 request.user.role == 'EXPERT_COMPTABLE')
 
 
@@ -1015,20 +1016,21 @@ class ExpertComptableBilanListView(APIView):
     View for Expert Comptable to get all bilans
     """
     permission_classes = [IsAuthenticated]
-    
+
     def has_expert_comptable_access(self, user):
-        return (hasattr(user, 'role') and 
+        return (hasattr(user, 'role') and
                 user.role == 'EXPERT_COMPTABLE')
-    
+
     def get(self, request):
         if not self.has_expert_comptable_access(request.user):
             return Response(
                 {'error': 'Only Expert Comptable can access bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         bilans = Bilan.objects.all().order_by('-created_at')
-        serializer = BilanSerializer(bilans, many=True, context={'request': request})
+        serializer = BilanSerializer(
+            bilans, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -1037,31 +1039,31 @@ class ExpertComptableBilanDetailView(APIView):
     View for Expert Comptable to get bilan by ID
     """
     permission_classes = [IsAuthenticated]
-    
+
     def has_expert_comptable_access(self, user):
-        return (hasattr(user, 'role') and 
+        return (hasattr(user, 'role') and
                 user.role == 'EXPERT_COMPTABLE')
-    
+
     def get_object(self, bilan_id):
         try:
             return Bilan.objects.get(id=bilan_id)
         except Bilan.DoesNotExist:
             return None
-    
+
     def get(self, request, bilan_id):
         if not self.has_expert_comptable_access(request.user):
             return Response(
                 {'error': 'Only Expert Comptable can access bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         bilan = self.get_object(bilan_id)
         if not bilan:
             return Response(
-                {'error': 'Bilan not found'}, 
+                {'error': 'Bilan not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         serializer = BilanSerializer(bilan, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -1070,20 +1072,21 @@ class ExpertComptableBilanCreateView(APIView):
     """
     View for Expert Comptable to create bilans
     """
-    permission_classes = [IsAuthenticated]
-    
+    permission_classes = [IsAuthenticated, IsExpertComptable]
+
     def has_expert_comptable_access(self, user):
-        return (hasattr(user, 'role') and 
+        return (hasattr(user, 'role') and
                 user.role == 'EXPERT_COMPTABLE')
-    
+
     def post(self, request):
         if not self.has_expert_comptable_access(request.user):
             return Response(
                 {'error': 'Only Expert Comptable can create bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        serializer = BilanSerializer(data=request.data, context={'request': request})
+
+        serializer = BilanSerializer(
+            data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -1095,52 +1098,54 @@ class ExpertComptableBilanUpdateView(APIView):
     View for Expert Comptable to update bilans
     """
     permission_classes = [IsAuthenticated]
-    
+
     def has_expert_comptable_access(self, user):
-        return (hasattr(user, 'role') and 
+        return (hasattr(user, 'role') and
                 user.role == 'EXPERT_COMPTABLE')
-    
+
     def get_object(self, bilan_id):
         try:
             return Bilan.objects.get(id=bilan_id)
         except Bilan.DoesNotExist:
             return None
-    
+
     def put(self, request, bilan_id):
         if not self.has_expert_comptable_access(request.user):
             return Response(
                 {'error': 'Only Expert Comptable can update bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         bilan = self.get_object(bilan_id)
         if not bilan:
             return Response(
-                {'error': 'Bilan not found'}, 
+                {'error': 'Bilan not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        serializer = BilanSerializer(bilan, data=request.data, partial=False, context={'request': request})
+
+        serializer = BilanSerializer(
+            bilan, data=request.data, partial=False, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
     def patch(self, request, bilan_id):
         if not self.has_expert_comptable_access(request.user):
             return Response(
                 {'error': 'Only Expert Comptable can update bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         bilan = self.get_object(bilan_id)
         if not bilan:
             return Response(
-                {'error': 'Bilan not found'}, 
+                {'error': 'Bilan not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        serializer = BilanSerializer(bilan, data=request.data, partial=True, context={'request': request})
+
+        serializer = BilanSerializer(
+            bilan, data=request.data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1159,12 +1164,13 @@ class BilanListCreateView(APIView):
         return [IsAuthenticated()]
 
     def has_expert_comptable_access(self, user):
-        return (hasattr(user, 'role') and 
+        return (hasattr(user, 'role') and
                 user.role == 'EXPERT_COMPTABLE')
 
     def get(self, request):
         bilans = Bilan.objects.all().order_by('-created_at')
-        serializer = BilanSerializer(bilans, many=True, context={'request': request})
+        serializer = BilanSerializer(
+            bilans, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -1173,8 +1179,9 @@ class BilanListCreateView(APIView):
                 {'error': 'Only Expert Comptable can create bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        serializer = BilanSerializer(data=request.data, context={'request': request})
+
+        serializer = BilanSerializer(
+            data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -1193,7 +1200,7 @@ class BilanDetailView(APIView):
         return [IsAuthenticated()]
 
     def has_expert_comptable_access(self, user):
-        return (hasattr(user, 'role') and 
+        return (hasattr(user, 'role') and
                 user.role == 'EXPERT_COMPTABLE')
 
     def get_object(self, bilan_id):
@@ -1206,10 +1213,10 @@ class BilanDetailView(APIView):
         bilan = self.get_object(bilan_id)
         if not bilan:
             return Response(
-                {'error': 'Bilan not found'}, 
+                {'error': 'Bilan not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         serializer = BilanSerializer(bilan, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -1219,15 +1226,16 @@ class BilanDetailView(APIView):
                 {'error': 'Only Expert Comptable can update bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         bilan = self.get_object(bilan_id)
         if not bilan:
             return Response(
-                {'error': 'Bilan not found'}, 
+                {'error': 'Bilan not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        serializer = BilanSerializer(bilan, data=request.data, partial=False, context={'request': request})
+
+        serializer = BilanSerializer(
+            bilan, data=request.data, partial=False, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1239,15 +1247,16 @@ class BilanDetailView(APIView):
                 {'error': 'Only Expert Comptable can update bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         bilan = self.get_object(bilan_id)
         if not bilan:
             return Response(
-                {'error': 'Bilan not found'}, 
+                {'error': 'Bilan not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        serializer = BilanSerializer(bilan, data=request.data, partial=True, context={'request': request})
+
+        serializer = BilanSerializer(
+            bilan, data=request.data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1259,13 +1268,13 @@ class BilanDetailView(APIView):
                 {'error': 'Only Expert Comptable can delete bilans'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         bilan = self.get_object(bilan_id)
         if not bilan:
             return Response(
-                {'error': 'Bilan not found'}, 
+                {'error': 'Bilan not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         bilan.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

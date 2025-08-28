@@ -347,8 +347,8 @@ class EmployeeAccountantUpdateSerializer(serializers.ModelSerializer):
         }
 
     def validate_role(self, value):
-        """Ensure only EMPLOYEE or ACCOUNTANT roles can be set"""
-        valid_roles = ['EMPLOYEE', 'ACCOUNTANT']
+        """Ensure only EMPLOYEE, ACCOUNTANT, or EXPERT_COMPTABLE roles can be set"""
+        valid_roles = ['EMPLOYEE', 'ACCOUNTANT', 'EXPERT_COMPTABLE']
         if value and value not in valid_roles:
             raise serializers.ValidationError(
                 f"Invalid role. Allowed roles: {', '.join(valid_roles)}"

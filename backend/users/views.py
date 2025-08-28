@@ -1,5 +1,3 @@
-# users/views.py - Complete file with caching
-
 from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -314,7 +312,6 @@ class SearchClientByCIN(APIView):
                 "user": user_serializer.data
             }
 
-            # Cache for 15 minutes
             SimpleCacheManager.set_cache(
                 'client_by_cin', response_data, 900, cin)
             logger.info(f"Cache set for client search: {cin}")
@@ -390,7 +387,6 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     def perform_update(self, serializer):
         user = serializer.save(role=self.request.user.role)
 
-        # Clear cache after profile update
         user_id = user.id
         SimpleCacheManager.delete_cache('user_profile', user_id)
         SimpleCacheManager.delete_cache('user_by_id', user_id)
@@ -450,8 +446,8 @@ class ClientUpdateView(generics.UpdateAPIView):
 
 class EmployeeAccountantUpdateView(generics.UpdateAPIView):
     """
-    Update view for Employee and Accountant users.
-    Only admins can update employee/accountant information.
+    Update view for Employee, Accountant, and Expert Comptable users.
+    Only admins can update employee/accountant/expert-comptable information.
     """
     queryset = CustomUser.objects.all()
     serializer_class = EmployeeAccountantUpdateSerializer
@@ -459,13 +455,13 @@ class EmployeeAccountantUpdateView(generics.UpdateAPIView):
     lookup_field = 'id'
 
     def get_queryset(self):
-        return CustomUser.objects.filter(role__in=['EMPLOYEE', 'ACCOUNTANT'])
+        return CustomUser.objects.filter(role__in=['EMPLOYEE', 'ACCOUNTANT', 'EXPERT_COMPTABLE'])
 
     def get_object(self):
         obj = super().get_object()
-        if obj.role not in ['EMPLOYEE', 'ACCOUNTANT']:
+        if obj.role not in ['EMPLOYEE', 'ACCOUNTANT', 'EXPERT_COMPTABLE']:
             raise ValidationError(
-                "Can only update Employee or Accountant users")
+                "Can only update Employee, Accountant, or Expert Comptable users")
         return obj
 
     def perform_update(self, serializer):

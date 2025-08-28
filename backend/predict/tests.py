@@ -112,7 +112,8 @@ class PredictionServiceTestCase(TestCase):
 
         for url in urls:
             response = self.client.get(url)
-            self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+            self.assertEqual(response.status_code,
+                             status.HTTP_401_UNAUTHORIZED)
 
     def test_service_initialization(self):
         """Test that the prediction service initializes properly"""
@@ -185,6 +186,6 @@ class PredictionAPITestCase(APITestCase):
         """Test that admin users can successfully clear prediction cache"""
         url = reverse('predict:clear-prediction-cache')
         response = self.client.post(url)
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('message', response.data)

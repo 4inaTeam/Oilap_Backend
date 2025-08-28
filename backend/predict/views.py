@@ -8,10 +8,24 @@ from django.core.cache import cache
 from django.utils import timezone
 from django.db.models import Sum, Count, Avg
 from django.db.models.functions import Extract
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
 from decimal import Decimal
 import logging
 import json
 import hashlib
+import io
+import base64
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
 
 from .ml_service import global_prediction_service
 from products.models import Product
@@ -955,6 +969,108 @@ def prediction_health(request):
             'status': 'error',
             'timestamp': timezone.now(),
             'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def generate_prediction_pdf(request, product_id):
+    """
+    Generate PDF prediction report for a product
+    """
+    try:
+        from .utils import (
+            calculate_oil_production_metrics,
+            create_pie_chart,
+            create_line_chart,
+            generate_prediction_pdf,
+            create_sample_data
+        )
+        
+        # Get the product
+        try:
+            product = get_object_or_404(Product, id=product_id)
+        except:
+            return Response({
+                'error': 'Product not found',
+                'success': False
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Prepare inputs
+        inputs = {
+            'quantite': product.quantity,
+            'qualite': product.quality,
+            'source': product.source or 'Non spécifié',
+            'type_presse': 'Méthode Continue'  # Default as specified
+        }
+        
+        # Calculate outputs using our utility function
+        outputs = calculate_oil_production_metrics(
+            quantity=product.quantity,
+            quality=product.quality,
+            source=product.source or 'Centre'
+        )
+        
+        # Create charts data
+        charts_data = {}
+        
+        # First pie chart: Division between margin and fitoura
+        margin_fitoura_data = [outputs['dechet_margin'], outputs['dechet_fitoura']]
+        margin_fitoura_labels = ['Déchet Margin', 'Déchet Fitoura']
+        pie_chart_1_b64 = create_pie_chart(
+            margin_fitoura_data,
+            margin_fitoura_labels,
+            'Division Margin vs Fitoura',
+            ['#FF6B6B', '#4ECDC4']
+        )
+        charts_data['pie_chart_1'] = pie_chart_1_b64
+        
+        # Second pie chart: Costs breakdown
+        cost_data = [
+            outputs['cout_energetique'],
+            outputs['cout_eau'], 
+            outputs['cout_main_oeuvre'],
+            outputs['temps_pression'] * 10  # Convert hours to cost representation
+        ]
+        cost_labels = ['Coût Énergétique', 'Coût Eau', 'Coût Main d\'Œuvre', 'Temps Pression']
+        pie_chart_2_b64 = create_pie_chart(
+            cost_data,
+            cost_labels,
+            'Répartition des Coûts',
+            ['#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F']
+        )
+        charts_data['pie_chart_2'] = pie_chart_2_b64
+        
+        # Line chart: Real vs Predicted data with error margin
+        sample_data = create_sample_data()
+        line_chart_b64 = create_line_chart(
+            sample_data['real_data'],
+            sample_data['predicted_data'],
+            sample_data['error_margins'],
+            sample_data['labels'],
+            'Données Réelles vs Prédictions avec Marge d\'Erreur'
+        )
+        charts_data['line_chart'] = line_chart_b64
+        
+        # Generate the PDF
+        pdf_buffer = generate_prediction_pdf(
+            product_id=product.id,
+            inputs=inputs,
+            outputs=outputs,
+            charts_data=charts_data
+        )
+        
+        # Return PDF as HTTP response
+        response = HttpResponse(pdf_buffer.getvalue(), content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="prediction_report_product_{product.id}.pdf"'
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error generating prediction PDF: {e}")
+        return Response({
+            'error': f'Failed to generate prediction PDF: {str(e)}',
+            'success': False
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
