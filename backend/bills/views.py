@@ -1,5 +1,3 @@
-# bills/views.py - Complete file with caching
-
 from django.db.models import Q, Sum, Count, Case, When, DecimalField
 from rest_framework import status
 from rest_framework.views import APIView

@@ -307,10 +307,15 @@ class ProductSummarySerializer(serializers.ModelSerializer):
 class ProductCreateSerializer(serializers.ModelSerializer):
     """Serializer simplifié pour création avec ML automatique"""
 
+    client = serializers.SlugRelatedField(
+        queryset=CustomUser.objects.filter(role='CLIENT'),
+        slug_field='cin',
+        required=True
+    )
+
     class Meta:
         model = Product
-        fields = ['source', 'quantity', 'quality',
-                  'client']  # ✅ 'source' (pas 'origine')
+        fields = ['source', 'quantity', 'quality', 'client']
 
     def validate_client(self, value):
         """Validation du client"""
@@ -325,7 +330,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         if request and request.user:
             validated_data['created_by'] = request.user
 
-        # Le produit sera créé avec toutes les prédictions automatiques
         product = Product.objects.create(**validated_data)
 
         logger.info(f"Product {product.id} created with automatic ML: "

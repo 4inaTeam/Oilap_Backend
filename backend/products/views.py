@@ -32,24 +32,12 @@ from users.models import CustomUser
 from rest_framework.exceptions import ValidationError, NotFound
 from django.db.models.functions import Coalesce
 
-# Cache imports
 from django.core.cache import cache
 import hashlib
 import json
 
-# Remove the duplicate import section that was here
 
 logger = logging.getLogger(__name__)
-
-# Rest of the code remains unchanged...
-# [All the class definitions and functions follow]
-
-# Cache imports
-
-
-logger = logging.getLogger(__name__)
-
-# Simple cache manager for products
 
 
 class ProductCacheManager:
@@ -114,7 +102,7 @@ class IsAdminOrEmployee(permissions.BasePermission):
 
 class ProductCreateView(generics.CreateAPIView):
     queryset = Product.objects.all()
-    serializer_class = ProductSerializer
+    serializer_class = ProductCreateSerializer  
     permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
 
     def create(self, request, *args, **kwargs):
