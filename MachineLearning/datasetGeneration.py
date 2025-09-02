@@ -15,7 +15,7 @@ def generate_olive_oil_dataset(n_samples=5000):
     """
 
     # Define possible values based on the document
-    sources = ['Nord', 'Centre', 'Sud', 'Sfax']  # Regions from document
+    sources = ['Nord', 'Centre', 'Sud', 'Sfax']  
     olive_types = ['Chemlali', 'Chétoui', 'Oueslati',
                    'Gerboui', 'Zalmati', 'Zarazi', 'Barouni']
     conditions = ['Rainfed', 'Irrigated']
@@ -57,7 +57,7 @@ def generate_olive_oil_dataset(n_samples=5000):
         condition = np.random.choice(conditions, p=[0.7, 0.3])
         olive_size = np.random.choice(olive_sizes)
         press_method = np.random.choice(
-            press_methods, p=[0.25, 0.25, 0.5])  # Modern methods more common
+            press_methods, p=[0.25, 0.25, 0.5])  
 
         # Quantity of olives (tons) - based on document ranges
         if source == 'Nord':

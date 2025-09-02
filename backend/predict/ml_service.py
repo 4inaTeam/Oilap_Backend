@@ -11,7 +11,8 @@ import logging
 import warnings
 
 # Suppress sklearn warnings about feature names
-warnings.filterwarnings("ignore", message="X does not have valid feature names")
+warnings.filterwarnings(
+    "ignore", message="X does not have valid feature names")
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,8 @@ class GlobalPredictionService:
     """
 
     def __init__(self):
-        self.main_model = None  # Energy, Water, Employees
-        self.all_model = None   # All targets including quality
+        self.main_model = None
+        self.all_model = None
         self.scaler = None
         self.encoders = None
         self.model_info = None
@@ -90,7 +91,8 @@ class GlobalPredictionService:
             models_dir = os.path.join(settings.BASE_DIR, 'ml_models')
 
             # Charger le modèle principal
-            main_model_path = os.path.join(models_dir, 'best_main_model.joblib')
+            main_model_path = os.path.join(
+                models_dir, 'best_main_model.joblib')
             self.main_model = joblib.load(main_model_path)
 
             # Charger le modèle complet
@@ -122,7 +124,7 @@ class GlobalPredictionService:
         """Retourne les catégories disponibles dans les encodeurs"""
         if not self.is_loaded:
             return {}
-        
+
         return {
             'sources': list(self.encoders['source'].classes_),
             'olive_types': list(self.encoders['olive_type'].classes_),
@@ -140,7 +142,7 @@ class GlobalPredictionService:
             # Paramètres par défaut
             if quantities_range is None:
                 quantities_range = [10, 25, 50, 100, 200, 500, 1000]  # tonnes
-            
+
             if sources is None:
                 sources = list(self.encoders['source'].classes_)
 
@@ -153,10 +155,14 @@ class GlobalPredictionService:
                         for quantity in quantities_range:
                             scenario = [
                                 self.encoders['source'].transform([source])[0],
-                                self.encoders['olive_type'].transform([olive_type])[0],
-                                self.encoders['condition'].transform([condition])[0],
-                                self.encoders['size'].transform(['Medium'])[0],  # Défaut
-                                self.encoders['press_method'].transform(['Méthode en continu'])[0],  # Défaut
+                                self.encoders['olive_type'].transform([olive_type])[
+                                    0],
+                                self.encoders['condition'].transform([condition])[
+                                    0],
+                                self.encoders['size'].transform(['Medium'])[
+                                    0],  # Défaut
+                                self.encoders['press_method'].transform(
+                                    ['Méthode en continu'])[0],  # Défaut
                                 quantity
                             ]
                             scenarios.append(scenario)
@@ -184,7 +190,8 @@ class GlobalPredictionService:
             return clean_nan_values(cached)
 
         try:
-            scenarios_matrix, descriptions = self._prepare_prediction_matrix(quantities_range)
+            scenarios_matrix, descriptions = self._prepare_prediction_matrix(
+                quantities_range)
             if scenarios_matrix is None:
                 return {'error': 'Failed to prepare scenarios', 'success': False}
 
@@ -196,8 +203,9 @@ class GlobalPredictionService:
 
             # Clean predictions first
             employee_predictions = np.where(
-                np.isnan(employee_predictions) | np.isinf(employee_predictions), 
-                0, 
+                np.isnan(employee_predictions) | np.isinf(
+                    employee_predictions),
+                0,
                 employee_predictions
             )
 
@@ -231,7 +239,8 @@ class GlobalPredictionService:
             # Analyse par quantité avec calcul d'efficacité sûr
             if quantities_range:
                 for quantity in quantities_range:
-                    quantity_mask = [d['quantity_tons'] == quantity for d in descriptions]
+                    quantity_mask = [d['quantity_tons']
+                                     == quantity for d in descriptions]
                     quantity_employees = employee_predictions[quantity_mask]
                     if len(quantity_employees) > 0:
                         mean_employees = safe_mean(quantity_employees, 0.0)
@@ -245,18 +254,20 @@ class GlobalPredictionService:
             try:
                 if result['by_source']:
                     most_efficient_source = min(
-                        result['by_source'].items(), 
-                        key=lambda x: x[1]['mean_employees'] if x[1]['mean_employees'] > 0 else float('inf')
+                        result['by_source'].items(),
+                        key=lambda x: x[1]['mean_employees'] if x[1]['mean_employees'] > 0 else float(
+                            'inf')
                     )[0]
                 else:
                     most_efficient_source = 'Unknown'
 
                 productivity_values = [
-                    q['tons_per_employee'] for q in result['by_quantity'].values() 
+                    q['tons_per_employee'] for q in result['by_quantity'].values()
                     if q['tons_per_employee'] > 0 and not np.isnan(q['tons_per_employee'])
                 ]
-                
-                avg_productivity = safe_mean(np.array(productivity_values), 0.0) if productivity_values else 0.0
+
+                avg_productivity = safe_mean(
+                    np.array(productivity_values), 0.0) if productivity_values else 0.0
 
                 result['efficiency_analysis'] = {
                     'most_efficient_source': most_efficient_source,
@@ -289,7 +300,8 @@ class GlobalPredictionService:
             return clean_nan_values(cached)
 
         try:
-            scenarios_matrix, descriptions = self._prepare_prediction_matrix(quantities_range)
+            scenarios_matrix, descriptions = self._prepare_prediction_matrix(
+                quantities_range)
             if scenarios_matrix is None:
                 return {'error': 'Failed to prepare scenarios', 'success': False}
 
@@ -299,8 +311,8 @@ class GlobalPredictionService:
             # Extraire et nettoyer les prédictions d'énergie
             energy_predictions = predictions[:, 0]
             energy_predictions = np.where(
-                np.isnan(energy_predictions) | np.isinf(energy_predictions), 
-                0, 
+                np.isnan(energy_predictions) | np.isinf(energy_predictions),
+                0,
                 energy_predictions
             )
 
@@ -333,15 +345,16 @@ class GlobalPredictionService:
 
             # Classement d'efficacité par source
             if result['by_source']:
-                sorted_sources = sorted(result['by_source'].items(), 
-                                      key=lambda x: x[1]['mean_kwh'])
+                sorted_sources = sorted(result['by_source'].items(),
+                                        key=lambda x: x[1]['mean_kwh'])
                 for rank, (source, data) in enumerate(sorted_sources, 1):
                     result['by_source'][source]['efficiency_rank'] = rank
 
             # Analyse par quantité
             if quantities_range:
                 for quantity in quantities_range:
-                    quantity_mask = [d['quantity_tons'] == quantity for d in descriptions]
+                    quantity_mask = [d['quantity_tons']
+                                     == quantity for d in descriptions]
                     quantity_energies = energy_predictions[quantity_mask]
                     if len(quantity_energies) > 0:
                         mean_energy = safe_mean(quantity_energies, 0.0)
@@ -369,7 +382,8 @@ class GlobalPredictionService:
             return clean_nan_values(cached)
 
         try:
-            scenarios_matrix, descriptions = self._prepare_prediction_matrix(quantities_range)
+            scenarios_matrix, descriptions = self._prepare_prediction_matrix(
+                quantities_range)
             if scenarios_matrix is None:
                 return {'error': 'Failed to prepare scenarios', 'success': False}
 
@@ -379,8 +393,8 @@ class GlobalPredictionService:
             # Extraire et nettoyer les prédictions d'eau
             water_predictions = predictions[:, 1]
             water_predictions = np.where(
-                np.isnan(water_predictions) | np.isinf(water_predictions), 
-                0, 
+                np.isnan(water_predictions) | np.isinf(water_predictions),
+                0,
                 water_predictions
             )
 
@@ -403,7 +417,8 @@ class GlobalPredictionService:
 
             # Analyse par condition
             for condition in self.encoders['condition'].classes_:
-                condition_mask = [d['condition'] == condition for d in descriptions]
+                condition_mask = [d['condition'] ==
+                                  condition for d in descriptions]
                 condition_water = water_predictions[condition_mask]
                 if len(condition_water) > 0:
                     result['by_condition'][condition] = {
@@ -414,7 +429,8 @@ class GlobalPredictionService:
             # Analyse par quantité
             if quantities_range:
                 for quantity in quantities_range:
-                    quantity_mask = [d['quantity_tons'] == quantity for d in descriptions]
+                    quantity_mask = [d['quantity_tons']
+                                     == quantity for d in descriptions]
                     quantity_water = water_predictions[quantity_mask]
                     if len(quantity_water) > 0:
                         mean_water = safe_mean(quantity_water, 0.0)
@@ -431,9 +447,6 @@ class GlobalPredictionService:
             logger.error(f"Error in water prediction: {e}")
             return {'error': str(e), 'success': False}
 
-    # Continue with other methods using the same NaN cleaning pattern...
-    # For brevity, I'll include the remaining methods with similar fixes applied
-
     def predict_all_targets(self, quantities_range=None):
         """Prédictions simultanées pour toutes les cibles principales - Version corrigée"""
         if not self.is_loaded:
@@ -445,27 +458,28 @@ class GlobalPredictionService:
             return clean_nan_values(cached)
 
         try:
-            scenarios_matrix, descriptions = self._prepare_prediction_matrix(quantities_range)
+            scenarios_matrix, descriptions = self._prepare_prediction_matrix(
+                quantities_range)
             if scenarios_matrix is None:
                 return {'error': 'Failed to prepare scenarios', 'success': False}
 
             scenarios_scaled = self.scaler.transform(scenarios_matrix)
-            
+
             # Prédictions principales
             main_predictions = self.main_model.predict(scenarios_scaled)
-            
+
             # Clean predictions
             main_predictions = np.where(
-                np.isnan(main_predictions) | np.isinf(main_predictions), 
-                0, 
+                np.isnan(main_predictions) | np.isinf(main_predictions),
+                0,
                 main_predictions
             )
-            
+
             # Prédictions complètes
             all_predictions = self.all_model.predict(scenarios_scaled)
             all_predictions = np.where(
-                np.isnan(all_predictions) | np.isinf(all_predictions), 
-                0, 
+                np.isnan(all_predictions) | np.isinf(all_predictions),
+                0,
                 all_predictions
             )
 
@@ -498,7 +512,8 @@ class GlobalPredictionService:
 
             # Targets additionnels du modèle complet
             if self.model_info and 'all_targets' in self.model_info:
-                additional_targets = self.model_info['all_targets'][3:]  # Skip main 3
+                # Skip main 3
+                additional_targets = self.model_info['all_targets'][3:]
                 for i, target in enumerate(additional_targets, 3):
                     if i < all_predictions.shape[1]:
                         target_predictions = all_predictions[:, i]
@@ -513,11 +528,11 @@ class GlobalPredictionService:
                 correlations = np.corrcoef(main_predictions.T)
                 # Clean correlation matrix
                 correlations = np.where(
-                    np.isnan(correlations) | np.isinf(correlations), 
-                    0, 
+                    np.isnan(correlations) | np.isinf(correlations),
+                    0,
                     correlations
                 )
-                
+
                 result['correlations'] = {
                     'energy_water': float(correlations[0, 1]),
                     'energy_employees': float(correlations[0, 2]),
@@ -551,7 +566,8 @@ class GlobalPredictionService:
             return clean_nan_values(cached)
 
         try:
-            scenarios_matrix, descriptions = self._prepare_prediction_matrix(quantities_range)
+            scenarios_matrix, descriptions = self._prepare_prediction_matrix(
+                quantities_range)
             if scenarios_matrix is None:
                 return {'error': 'Failed to prepare scenarios', 'success': False}
 
@@ -560,8 +576,8 @@ class GlobalPredictionService:
 
             # Clean predictions
             all_predictions = np.where(
-                np.isnan(all_predictions) | np.isinf(all_predictions), 
-                0, 
+                np.isnan(all_predictions) | np.isinf(all_predictions),
+                0,
                 all_predictions
             )
 
@@ -628,10 +644,13 @@ class GlobalPredictionService:
                     try:
                         scenario = [
                             self.encoders['source'].transform([source])[0],
-                            self.encoders['olive_type'].transform([olive_type])[0],
-                            self.encoders['condition'].transform([condition])[0],
+                            self.encoders['olive_type'].transform([olive_type])[
+                                0],
+                            self.encoders['condition'].transform([condition])[
+                                0],
                             self.encoders['size'].transform(['Medium'])[0],
-                            self.encoders['press_method'].transform(['Méthode en continu'])[0],
+                            self.encoders['press_method'].transform(
+                                ['Méthode en continu'])[0],
                             params['quantity']
                         ]
                         seasonal_scenarios.append(scenario)
@@ -643,7 +662,8 @@ class GlobalPredictionService:
                             'quantity': params['quantity']
                         })
                     except Exception as e:
-                        logger.warning(f"Error creating scenario for {season}, {source}: {e}")
+                        logger.warning(
+                            f"Error creating scenario for {season}, {source}: {e}")
                         continue
 
             if not seasonal_scenarios:
@@ -677,7 +697,8 @@ class GlobalPredictionService:
 
             # Analyse par saison
             for season in seasons.keys():
-                season_mask = [d['season'] == season for d in seasonal_descriptions]
+                season_mask = [d['season'] ==
+                               season for d in seasonal_descriptions]
                 season_main = main_predictions[season_mask]
                 season_all = all_predictions[season_mask]
 
@@ -693,10 +714,10 @@ class GlobalPredictionService:
             # Recommandations saisonnières
             if result['seasonal_patterns']:
                 try:
-                    best_energy_season = min(result['seasonal_patterns'].items(), 
-                                           key=lambda x: x[1]['energy_kwh'])[0]
-                    best_quality_season = max(result['seasonal_patterns'].items(), 
-                                            key=lambda x: x[1]['quality_score'])[0]
+                    best_energy_season = min(result['seasonal_patterns'].items(),
+                                             key=lambda x: x[1]['energy_kwh'])[0]
+                    best_quality_season = max(result['seasonal_patterns'].items(),
+                                              key=lambda x: x[1]['quality_score'])[0]
 
                     result['recommendations'] = {
                         'most_energy_efficient_season': best_energy_season,
@@ -743,5 +764,4 @@ class GlobalPredictionService:
         })
 
 
-# Instance globale
 global_prediction_service = GlobalPredictionService()

@@ -1,4 +1,3 @@
-# backend/users/permissions.py
 from rest_framework.permissions import BasePermission
 
 
