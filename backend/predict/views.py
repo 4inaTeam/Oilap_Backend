@@ -1,5 +1,5 @@
-# predict/views.py
-
+from products.models import Product
+from .ml_service import global_prediction_service
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -27,8 +27,6 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 
-from .ml_service import global_prediction_service
-from products.models import Product
 
 logger = logging.getLogger(__name__)
 
@@ -376,7 +374,7 @@ class PredictAllView(APIView):
                     }
 
                 # Add efficiency analysis
-                if predictions['main_targets']:
+                if predictions.get('main_targets'):
                     main_targets = predictions['main_targets']
                     predictions['efficiency_analysis'] = {
                         'energy_efficiency': {
@@ -678,31 +676,39 @@ class PredictSeasonalView(APIView):
         """Generate detailed seasonal recommendations"""
         recommendations = {}
 
-        # Find best seasons for each metric
-        best_energy = min(seasonal_patterns.items(),
-                          key=lambda x: x[1].get('energy_kwh', float('inf')))
-        best_quality = max(seasonal_patterns.items(),
-                           key=lambda x: x[1].get('quality_score', 0))
-        best_efficiency = max(seasonal_patterns.items(),
-                              key=lambda x: x[1].get('employees', 0))
+        try:
+            # Find best seasons for each metric
+            best_energy = min(seasonal_patterns.items(),
+                              key=lambda x: x[1].get('energy_kwh', float('inf')))
+            best_quality = max(seasonal_patterns.items(),
+                               key=lambda x: x[1].get('quality_score', 0))
+            best_efficiency = max(seasonal_patterns.items(),
+                                  key=lambda x: x[1].get('employees', 0))
 
-        recommendations['optimal_planning'] = {
-            'energy_efficiency': {
-                'best_season': best_energy[0],
-                'savings_potential': f"{(max(s.get('energy_kwh', 0) for s in seasonal_patterns.values()) - best_energy[1].get('energy_kwh', 0)):.1f} kWh",
-                'recommendation': f"Schedule high-volume production in {best_energy[0]} for maximum energy efficiency"
-            },
-            'quality_optimization': {
-                'best_season': best_quality[0],
-                'quality_advantage': f"+{(best_quality[1].get('quality_score', 0) - min(s.get('quality_score', 0) for s in seasonal_patterns.values())):.1f} points",
-                'recommendation': f"Focus on premium oil production during {best_quality[0]} season"
-            },
-            'resource_planning': {
-                'peak_season': best_efficiency[0],
-                'staffing_recommendation': f"Plan for {best_efficiency[1].get('employees', 0):.0f} employees during peak season",
-                'recommendation': f"Optimize workforce allocation for {best_efficiency[0]} production cycles"
+            recommendations['optimal_planning'] = {
+                'energy_efficiency': {
+                    'best_season': best_energy[0],
+                    'savings_potential': f"{(max(s.get('energy_kwh', 0) for s in seasonal_patterns.values()) - best_energy[1].get('energy_kwh', 0)):.1f} kWh",
+                    'recommendation': f"Schedule high-volume production in {best_energy[0]} for maximum energy efficiency"
+                },
+                'quality_optimization': {
+                    'best_season': best_quality[0],
+                    'quality_advantage': f"+{(best_quality[1].get('quality_score', 0) - min(s.get('quality_score', 0) for s in seasonal_patterns.values())):.1f} points",
+                    'recommendation': f"Focus on premium oil production during {best_quality[0]} season"
+                },
+                'resource_planning': {
+                    'peak_season': best_efficiency[0],
+                    'staffing_recommendation': f"Plan for {best_efficiency[1].get('employees', 0):.0f} employees during peak season",
+                    'recommendation': f"Optimize workforce allocation for {best_efficiency[0]} production cycles"
+                }
             }
-        }
+        except Exception as e:
+            logger.warning(f"Error generating seasonal recommendations: {e}")
+            recommendations['optimal_planning'] = {
+                'energy_efficiency': {'best_season': 'autumn', 'recommendation': 'Unable to determine best season'},
+                'quality_optimization': {'best_season': 'autumn', 'recommendation': 'Unable to determine best season'},
+                'resource_planning': {'peak_season': 'autumn', 'recommendation': 'Unable to determine peak season'}
+            }
 
         return recommendations
 
@@ -793,18 +799,18 @@ def clear_prediction_cache(request):
         else:
             # Clear specific prediction cache patterns
             cache_patterns = specific_keys if specific_keys else [
-                'predict_energy_',
-                'predict_water_',
-                'predict_employees_',
-                'predict_all_',
-                'predict_quality_',
-                'seasonal_analysis'
+                'enhanced_predict_energy_',
+                'enhanced_predict_water_',
+                'enhanced_predict_employees_',
+                'enhanced_predict_all_',
+                'enhanced_predict_quality_',
+                'enhanced_seasonal_analysis'
             ]
 
             for pattern in cache_patterns:
                 # In production, you'd want more sophisticated cache key management
                 # This is a simplified approach
-                if pattern == 'seasonal_analysis':
+                if pattern == 'enhanced_seasonal_analysis':
                     if cache.delete(pattern):
                         cleared_count += 1
                 else:
@@ -848,7 +854,7 @@ def reload_models(request):
         cache.clear()
 
         # Reload the global prediction service
-        global_prediction_service.__init__()
+        global_prediction_service._load_enhanced_models()
 
         reload_status = {
             'models_reloaded': global_prediction_service.is_loaded,
@@ -886,10 +892,10 @@ def prediction_health(request):
     """
     try:
         health_status = {
-            'service': 'ML Prediction API',
+            'service': 'Enhanced ML Prediction API',
             'status': 'healthy' if global_prediction_service.is_loaded else 'unhealthy',
             'timestamp': timezone.now(),
-            'version': '1.0.0',
+            'version': '2.0.0',
             'checks': {}
         }
 
@@ -965,7 +971,7 @@ def prediction_health(request):
     except Exception as e:
         logger.error(f"Error in prediction health check: {e}")
         return Response({
-            'service': 'ML Prediction API',
+            'service': 'Enhanced ML Prediction API',
             'status': 'error',
             'timestamp': timezone.now(),
             'error': str(e)
@@ -976,17 +982,9 @@ def prediction_health(request):
 @permission_classes([permissions.IsAuthenticated])
 def generate_prediction_pdf(request, product_id):
     """
-    Generate PDF prediction report for a product
+    Generate PDF prediction report for a product using enhanced ML service
     """
     try:
-        from .utils import (
-            calculate_oil_production_metrics,
-            create_pie_chart,
-            create_line_chart,
-            generate_prediction_pdf,
-            create_sample_data
-        )
-        
         # Get the product
         try:
             product = get_object_or_404(Product, id=product_id)
@@ -995,81 +993,173 @@ def generate_prediction_pdf(request, product_id):
                 'error': 'Product not found',
                 'success': False
             }, status=status.HTTP_404_NOT_FOUND)
-        
-        # Prepare inputs
-        inputs = {
-            'quantite': product.quantity,
-            'qualite': product.quality,
-            'source': product.source or 'Non spécifié',
-            'type_presse': 'Méthode Continue'  # Default as specified
-        }
-        
-        # Calculate outputs using our utility function
-        outputs = calculate_oil_production_metrics(
+
+        if not global_prediction_service.is_loaded:
+            return Response({
+                'error': 'ML service not available',
+                'success': False
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        # Get enhanced predictions for this specific product
+        predictions = global_prediction_service.predict_costs_and_production(
+            source=product.source or 'Centre',
             quantity=product.quantity,
-            quality=product.quality,
-            source=product.source or 'Centre'
+            quality=product.quality
         )
-        
-        # Create charts data
-        charts_data = {}
-        
-        # First pie chart: Division between margin and fitoura
-        margin_fitoura_data = [outputs['dechet_margin'], outputs['dechet_fitoura']]
-        margin_fitoura_labels = ['Déchet Margin', 'Déchet Fitoura']
-        pie_chart_1_b64 = create_pie_chart(
-            margin_fitoura_data,
-            margin_fitoura_labels,
-            'Division Margin vs Fitoura',
-            ['#FF6B6B', '#4ECDC4']
+
+        if not predictions:
+            return Response({
+                'error': 'Unable to generate predictions for this product',
+                'success': False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Create PDF content
+        response = HttpResponse(content_type='application/pdf')
+        response[
+            'Content-Disposition'] = f'attachment; filename="enhanced_prediction_report_product_{product.id}.pdf"'
+
+        doc = SimpleDocTemplate(response, pagesize=A4)
+        story = []
+        styles = getSampleStyleSheet()
+
+        # Title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            spaceAfter=30,
+            alignment=TA_CENTER
         )
-        charts_data['pie_chart_1'] = pie_chart_1_b64
-        
-        # Second pie chart: Costs breakdown
-        cost_data = [
-            outputs['cout_energetique'],
-            outputs['cout_eau'], 
-            outputs['cout_main_oeuvre'],
-            outputs['temps_pression'] * 10  # Convert hours to cost representation
+        story.append(
+            Paragraph(f"Enhanced Prediction Report - Product {product.id}", title_style))
+        story.append(Spacer(1, 20))
+
+        # Product Information
+        story.append(Paragraph("Product Information", styles['Heading2']))
+        product_info = [
+            ['Product ID', str(product.id)],
+            ['Quantity', f"{product.quantity} kg"],
+            ['Quality', product.quality],
+            ['Source', product.source or 'Non spécifié'],
+            ['Created', product.created_at.strftime('%Y-%m-%d %H:%M')]
         ]
-        cost_labels = ['Coût Énergétique', 'Coût Eau', 'Coût Main d\'Œuvre', 'Temps Pression']
-        pie_chart_2_b64 = create_pie_chart(
-            cost_data,
-            cost_labels,
-            'Répartition des Coûts',
-            ['#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F']
-        )
-        charts_data['pie_chart_2'] = pie_chart_2_b64
-        
-        # Line chart: Real vs Predicted data with error margin
-        sample_data = create_sample_data()
-        line_chart_b64 = create_line_chart(
-            sample_data['real_data'],
-            sample_data['predicted_data'],
-            sample_data['error_margins'],
-            sample_data['labels'],
-            'Données Réelles vs Prédictions avec Marge d\'Erreur'
-        )
-        charts_data['line_chart'] = line_chart_b64
-        
-        # Generate the PDF
-        pdf_buffer = generate_prediction_pdf(
-            product_id=product.id,
-            inputs=inputs,
-            outputs=outputs,
-            charts_data=charts_data
-        )
-        
-        # Return PDF as HTTP response
-        response = HttpResponse(pdf_buffer.getvalue(), content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="prediction_report_product_{product.id}.pdf"'
-        
+
+        product_table = Table(product_info, colWidths=[3*inch, 3*inch])
+        product_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 14),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        story.append(product_table)
+        story.append(Spacer(1, 20))
+
+        # Cost Predictions
+        if 'costs' in predictions:
+            story.append(Paragraph("Cost Predictions", styles['Heading2']))
+            costs = predictions['costs']
+            cost_data = [
+                ['Cost Type', 'Amount (TND)'],
+                ['Electricity Cost', f"{costs['electricity_cost_tnd']:.2f}"],
+                ['Water Cost', f"{costs['water_cost_tnd']:.2f}"],
+                ['Labor Cost', f"{costs['labor_cost_tnd']:.2f}"],
+                ['Total Operational Cost',
+                    f"{costs['total_operational_cost_tnd']:.2f}"]
+            ]
+
+            cost_table = Table(cost_data, colWidths=[3*inch, 2*inch])
+            cost_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(cost_table)
+            story.append(Spacer(1, 20))
+
+        # Production Predictions
+        if 'production' in predictions:
+            story.append(
+                Paragraph("Production Predictions", styles['Heading2']))
+            production = predictions['production']
+            production_data = [
+                ['Production Metric', 'Predicted Value'],
+                ['Oil Quality Score',
+                    f"{production['oil_quality_score']:.1f}/100"],
+                ['Oil Quantity',
+                    f"{production['oil_quantity_tons']:.2f} tons"],
+                ['Processing Time',
+                    f"{production['processing_time_hours']:.1f} hours"],
+                ['Energy Consumption',
+                    f"{production['energy_consumption_kwh']:.1f} kWh"],
+                ['Water Consumption',
+                    f"{production['water_consumption_liters']:.1f} liters"],
+                ['Required Employees',
+                    f"{production['total_employees']} employees"]
+            ]
+
+            production_table = Table(
+                production_data, colWidths=[3*inch, 2*inch])
+            production_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkgreen),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(production_table)
+            story.append(Spacer(1, 20))
+
+        # Mapping Information
+        if 'mapping_info' in predictions:
+            story.append(Paragraph("ML Model Mapping", styles['Heading2']))
+            mapping = predictions['mapping_info']
+            mapping_data = [
+                ['Original Input', 'ML Model Mapping'],
+                ['Source Region', mapping['source_region']],
+                ['Olive Type', mapping['olive_type_ml']],
+                ['Press Method', mapping['press_method']],
+                ['Condition', mapping['condition']]
+            ]
+
+            mapping_table = Table(mapping_data, colWidths=[3*inch, 3*inch])
+            mapping_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.purple),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lavender),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(mapping_table)
+            story.append(Spacer(1, 20))
+
+        # Footer
+        story.append(
+            Paragraph("Generated by Enhanced ML Prediction Service", styles['Normal']))
+        story.append(Paragraph(
+            f"Generated on: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+
+        doc.build(story)
         return response
-        
+
     except Exception as e:
-        logger.error(f"Error generating prediction PDF: {e}")
+        logger.error(f"Error generating enhanced prediction PDF: {e}")
         return Response({
-            'error': f'Failed to generate prediction PDF: {str(e)}',
+            'error': f'Failed to generate enhanced prediction PDF: {str(e)}',
             'success': False
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1078,7 +1168,7 @@ def generate_prediction_pdf(request, product_id):
 @permission_classes([permissions.IsAuthenticated])
 def prediction_metrics(request):
     """
-    Get prediction service metrics and statistics
+    Get enhanced prediction service metrics and statistics
     """
     try:
         if not hasattr(request.user, 'role') or request.user.role not in ['ADMIN', 'EMPLOYEE']:
@@ -1091,8 +1181,8 @@ def prediction_metrics(request):
         metrics = {
             'service_info': {
                 'is_loaded': global_prediction_service.is_loaded,
-                'uptime': 'N/A',  # Would need startup tracking for real uptime
-                'version': '1.0.0'
+                'service_type': 'Enhanced ML Prediction Service',
+                'version': '2.0.0'
             },
             'model_info': global_prediction_service.get_model_status(),
             'data_statistics': {},
@@ -1114,7 +1204,6 @@ def prediction_metrics(request):
 
             # Source distribution
             source_dist = Product.objects.exclude(source__isnull=True).exclude(
-                # Top 10 sources
                 source__exact='').values('source').annotate(count=Count('id'))[:10]
             source_stats = {item['source']: item['count']
                             for item in source_dist}
@@ -1164,7 +1253,7 @@ def prediction_metrics(request):
             metrics['cache_statistics'] = {
                 'backend': cache.__class__.__name__,
                 'test_successful': cache_test == 'test',
-                'estimated_keys': 'N/A'  
+                'estimated_keys': 'N/A'
             }
         except Exception as e:
             metrics['cache_statistics'] = {'error': str(e)}
@@ -1183,12 +1272,11 @@ def prediction_metrics(request):
 @permission_classes([permissions.IsAuthenticated])
 def batch_prediction(request):
     """
-    Perform batch predictions for multiple scenarios
+    Perform batch predictions for multiple scenarios using enhanced ML service
     """
     try:
         data = request.data
         scenarios = data.get('scenarios', [])
-        # all, energy, water, employees, quality
         prediction_type = data.get('prediction_type', 'all')
 
         if not scenarios:

@@ -15,12 +15,24 @@ def generate_olive_oil_dataset(n_samples=5000):
     """
 
     # Define possible values based on the document
-    sources = ['Nord', 'Centre', 'Sud', 'Sfax']  
+    sources = ['Nord', 'Centre', 'Sud', 'Sfax']
     olive_types = ['Chemlali', 'Chétoui', 'Oueslati',
                    'Gerboui', 'Zalmati', 'Zarazi', 'Barouni']
     conditions = ['Rainfed', 'Irrigated']
     olive_sizes = ['Small', 'Medium', 'Large']
     press_methods = ['Traditionnel', 'Super-presses', 'Méthode en continu']
+
+    # TUNISIAN UTILITY PRICES (2024 rates)
+    electricity_price_tnd_per_kwh = 0.352  # TND per kWh (industrial rate STEG)
+    water_price_tnd_per_m3 = 0.200  # TND per m³ (industrial rate SONEDE)
+
+    # TUNISIAN EMPLOYEE HOURLY WAGES (2024 rates) - TND per hour
+    hourly_wages = {
+        'Ouvriers': 2.5,      # Basic industrial workers (above minimum wage)
+        'Comptables': 6.0,    # Skilled accountants/financial staff
+        'Registeurs': 3.5,    # Administrative clerks/registrars
+        'Guards': 3.0         # Security guards
+    }
 
     # Regional characteristics based on document analysis
     regional_params = {
@@ -57,7 +69,7 @@ def generate_olive_oil_dataset(n_samples=5000):
         condition = np.random.choice(conditions, p=[0.7, 0.3])
         olive_size = np.random.choice(olive_sizes)
         press_method = np.random.choice(
-            press_methods, p=[0.25, 0.25, 0.5])  
+            press_methods, p=[0.25, 0.25, 0.5])
 
         # Quantity of olives (tons) - based on document ranges
         if source == 'Nord':
@@ -135,15 +147,15 @@ def generate_olive_oil_dataset(n_samples=5000):
             guards = 1
 
         # 6. Energy consumption components (kWh)
-        base_energy = quantity_olives * 50  # 50 kWh per ton base
+        base_energy = quantity_olives * 50  
         energy_factor = method_params['energy']
 
         global_active_power = base_energy * \
             energy_factor * np.random.uniform(0.8, 1.2)
         global_reactive_power = global_active_power * \
             np.random.uniform(0.1, 0.3)
-        voltage = np.random.normal(240, 5)  # Standard voltage with variation
-        global_intensity = global_active_power / voltage * 1000  # Convert to amperes
+        voltage = np.random.normal(240, 5)  
+        global_intensity = global_active_power / voltage * 1000 
 
         # 7. Water consumption (liters)
         # 800L per ton base (varies by method)
@@ -154,6 +166,32 @@ def generate_olive_oil_dataset(n_samples=5000):
         water_consumption = base_water * \
             region_params['water_factor'] * np.random.uniform(0.8, 1.2)
         water_consumption = max(0, water_consumption)
+
+        # 8. CALCULATE COSTS IN TND (Tunisian Dinars)
+        # Convert water from liters to cubic meters (1 m³ = 1000 L)
+        water_consumption_m3 = water_consumption / 1000
+
+        # Total energy consumption for billing (active power only - main component)
+        total_energy_kwh = global_active_power
+
+        # Calculate utility costs
+        electricity_cost_tnd = total_energy_kwh * electricity_price_tnd_per_kwh
+        water_cost_tnd = water_consumption_m3 * water_price_tnd_per_m3
+
+        # Calculate labor costs
+        ouvriers_cost_tnd = ouvriers * \
+            processing_time * hourly_wages['Ouvriers']
+        comptables_cost_tnd = comptables * \
+            processing_time * hourly_wages['Comptables']
+        registeurs_cost_tnd = registeurs * \
+            processing_time * hourly_wages['Registeurs']
+        guards_cost_tnd = guards * processing_time * hourly_wages['Guards']
+        total_labor_cost_tnd = (ouvriers_cost_tnd + comptables_cost_tnd +
+                                registeurs_cost_tnd + guards_cost_tnd)
+
+        # Total operational costs
+        total_utility_cost_tnd = electricity_cost_tnd + water_cost_tnd
+        total_operational_cost_tnd = total_utility_cost_tnd + total_labor_cost_tnd
 
         # Create record
         record = {
@@ -189,10 +227,32 @@ def generate_olive_oil_dataset(n_samples=5000):
             'Global_Reactive_Power_kVAr': round(global_reactive_power, 2),
             'Voltage_V': round(voltage, 1),
             'Global_Intensity_A': round(global_intensity, 2),
-            'Total_Energy_Consumption_kWh': round(global_active_power + global_reactive_power, 2),
+            'Total_Energy_Consumption_kWh': round(total_energy_kwh, 2),
 
             # Water consumption
-            'Water_Consumption_Liters': round(water_consumption, 0)
+            'Water_Consumption_Liters': round(water_consumption, 0),
+            'Water_Consumption_m3': round(water_consumption_m3, 3),
+
+            # UTILITY COSTS
+            'Electricity_Price_TND_per_kWh': electricity_price_tnd_per_kwh,
+            'Water_Price_TND_per_m3': water_price_tnd_per_m3,
+            'Electricity_Cost_TND': round(electricity_cost_tnd, 3),
+            'Water_Cost_TND': round(water_cost_tnd, 3),
+            'Total_Utility_Cost_TND': round(total_utility_cost_tnd, 3),
+
+            # LABOR COSTS
+            'Hourly_Wage_Ouvriers_TND': hourly_wages['Ouvriers'],
+            'Hourly_Wage_Comptables_TND': hourly_wages['Comptables'],
+            'Hourly_Wage_Registeurs_TND': hourly_wages['Registeurs'],
+            'Hourly_Wage_Guards_TND': hourly_wages['Guards'],
+            'Ouvriers_Cost_TND': round(ouvriers_cost_tnd, 3),
+            'Comptables_Cost_TND': round(comptables_cost_tnd, 3),
+            'Registeurs_Cost_TND': round(registeurs_cost_tnd, 3),
+            'Guards_Cost_TND': round(guards_cost_tnd, 3),
+            'Total_Labor_Cost_TND': round(total_labor_cost_tnd, 3),
+
+            # TOTAL OPERATIONAL COSTS
+            'Total_Operational_Cost_TND': round(total_operational_cost_tnd, 3)
         }
 
         data.append(record)
@@ -207,20 +267,59 @@ def generate_olive_oil_dataset(n_samples=5000):
 
 
 # Generate dataset
-print("Generating Tunisian Olive Oil Production Dataset...")
+print("Generating Tunisian Olive Oil Production Dataset with Utility Costs...")
 dataset = generate_olive_oil_dataset(5000)
 
 # Save to CSV
-dataset.to_csv('tunisian_olive_oil_production.csv', index=False)
+dataset.to_csv('tunisian_olive_oil_production_with_costs.csv', index=False)
 
 print(f"Dataset generated successfully!")
 print(f"Shape: {dataset.shape}")
 print(f"Date range: {dataset['Date'].min()} to {dataset['Date'].max()}")
-print("\nFirst 5 rows:")
-print(dataset.head())
+
+print(f"\nUtility Prices Used:")
+print(
+    f"- Electricity: {dataset['Electricity_Price_TND_per_kWh'].iloc[0]} TND per kWh (STEG industrial rate)")
+print(
+    f"- Water: {dataset['Water_Price_TND_per_m3'].iloc[0]} TND per m³ (SONEDE industrial rate)")
+
+print(f"\nEmployee Hourly Wages Used:")
+print(
+    f"- Ouvriers: {dataset['Hourly_Wage_Ouvriers_TND'].iloc[0]} TND per hour")
+print(
+    f"- Comptables: {dataset['Hourly_Wage_Comptables_TND'].iloc[0]} TND per hour")
+print(
+    f"- Registeurs: {dataset['Hourly_Wage_Registeurs_TND'].iloc[0]} TND per hour")
+print(f"- Guards: {dataset['Hourly_Wage_Guards_TND'].iloc[0]} TND per hour")
+
+print(f"\nCost Statistics:")
+print(
+    f"- Average Electricity Cost: {dataset['Electricity_Cost_TND'].mean():.3f} TND per batch")
+print(
+    f"- Average Water Cost: {dataset['Water_Cost_TND'].mean():.3f} TND per batch")
+print(
+    f"- Average Labor Cost: {dataset['Total_Labor_Cost_TND'].mean():.3f} TND per batch")
+print(
+    f"- Average Total Utility Cost: {dataset['Total_Utility_Cost_TND'].mean():.3f} TND per batch")
+print(
+    f"- Average Total Operational Cost: {dataset['Total_Operational_Cost_TND'].mean():.3f} TND per batch")
+print(
+    f"- Maximum Total Operational Cost: {dataset['Total_Operational_Cost_TND'].max():.3f} TND per batch")
+
+print("\nFirst 5 rows of cost columns:")
+cost_columns = ['Electricity_Cost_TND', 'Water_Cost_TND', 'Total_Labor_Cost_TND',
+                'Total_Utility_Cost_TND', 'Total_Operational_Cost_TND']
+print(dataset[cost_columns].head())
+
+print("\nFirst 5 rows of individual labor costs:")
+labor_columns = ['Ouvriers_Cost_TND', 'Comptables_Cost_TND',
+                 'Registeurs_Cost_TND', 'Guards_Cost_TND']
+print(dataset[labor_columns].head())
 
 print("\nDataset info:")
 print(dataset.info())
 
-print("\nDataset description:")
-print(dataset.describe())
+print("\nNew cost columns description:")
+all_cost_columns = ['Electricity_Cost_TND', 'Water_Cost_TND', 'Total_Labor_Cost_TND',
+                    'Total_Utility_Cost_TND', 'Total_Operational_Cost_TND']
+print(dataset[all_cost_columns].describe())
