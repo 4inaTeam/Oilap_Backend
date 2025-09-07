@@ -12,6 +12,12 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from django.http import HttpResponse
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework import permissions, status
+from products.models import Product
+from .ml_service import global_prediction_service
 import logging
 import matplotlib
 matplotlib.use('Agg')
@@ -19,79 +25,344 @@ matplotlib.use('Agg')
 logger = logging.getLogger(__name__)
 
 
+def create_waste_partition_chart(fitoura_amount, margin_amount):
+    """
+    Create a pie chart showing the partition of waste (Fitoura vs Margin)
+    """
+    try:
+        if fitoura_amount <= 0 and margin_amount <= 0:
+            raise ValueError("No waste data available")
+
+        data = [fitoura_amount, margin_amount]
+        labels = ['Déchet Fitoura', 'Déchet Margin']
+        colors = ['#FF6B6B', '#4ECDC4']
+
+        plt.figure(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        wedges, texts, autotexts = ax.pie(
+            data,
+            labels=labels,
+            autopct='%1.1f%%',
+            startangle=90,
+            colors=colors,
+            explode=(0.05, 0.05)  # Slight separation for better visibility
+        )
+
+        ax.set_title('Répartition des Déchets',
+                     fontsize=14, fontweight='bold', pad=20)
+
+        # Style the text
+        for autotext in autotexts:
+            autotext.set_color('white')
+            autotext.set_fontweight('bold')
+            autotext.set_fontsize(11)
+
+        for text in texts:
+            text.set_fontsize(10)
+            text.set_fontweight('bold')
+
+        # Add total waste info
+        total_waste = fitoura_amount + margin_amount
+        plt.figtext(0.5, 0.02, f'Total des Déchets: {total_waste:.2f} kg',
+                    ha='center', fontsize=10, style='italic')
+
+        plt.tight_layout()
+
+        # Convert to base64
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=150,
+                    bbox_inches='tight', facecolor='white')
+        buffer.seek(0)
+        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        plt.close()
+
+        return image_base64
+
+    except Exception as e:
+        logger.error(f"Error creating waste partition chart: {e}")
+        return create_error_chart(f"Erreur Graphique Déchets:\n{str(e)}")
+
+
+def create_cost_distribution_chart(costs_dict):
+    """
+    Create a pie chart showing the distribution of different costs
+    """
+    try:
+        # Extract cost values
+        electricity_cost = costs_dict.get('electricity_cost_tnd', 0)
+        water_cost = costs_dict.get('water_cost_tnd', 0)
+        labor_cost = costs_dict.get('labor_cost_tnd', 0)
+
+        # Filter out zero costs
+        cost_data = []
+        cost_labels = []
+        if electricity_cost > 0:
+            cost_data.append(electricity_cost)
+            cost_labels.append('Coût Électricité')
+        if water_cost > 0:
+            cost_data.append(water_cost)
+            cost_labels.append('Coût Eau')
+        if labor_cost > 0:
+            cost_data.append(labor_cost)
+            cost_labels.append('Coût Main d\'Œuvre')
+
+        if not cost_data:
+            raise ValueError("No cost data available")
+
+        colors = ['#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8']
+
+        plt.figure(figsize=(8, 6))
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        wedges, texts, autotexts = ax.pie(
+            cost_data,
+            labels=cost_labels,
+            autopct='%1.1f%%',
+            startangle=45,
+            colors=colors[:len(cost_data)],
+            explode=[0.02] * len(cost_data)  # Small separation
+        )
+
+        ax.set_title('Répartition des Coûts Opérationnels',
+                     fontsize=14, fontweight='bold', pad=20)
+
+        # Style the text
+        for autotext in autotexts:
+            autotext.set_color('white')
+            autotext.set_fontweight('bold')
+            autotext.set_fontsize(11)
+
+        for text in texts:
+            text.set_fontsize(10)
+            text.set_fontweight('bold')
+
+        # Add total cost info
+        total_cost = sum(cost_data)
+        plt.figtext(0.5, 0.02, f'Coût Total: {total_cost:.2f} TND',
+                    ha='center', fontsize=10, style='italic')
+
+        plt.tight_layout()
+
+        # Convert to base64
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=150,
+                    bbox_inches='tight', facecolor='white')
+        buffer.seek(0)
+        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        plt.close()
+
+        return image_base64
+
+    except Exception as e:
+        logger.error(f"Error creating cost distribution chart: {e}")
+        return create_error_chart(f"Erreur Graphique Coûts:\n{str(e)}")
+
+
+def create_actual_vs_predicted_chart(product, predictions):
+    """
+    Create a line chart comparing actual data vs predicted data
+    """
+    try:
+        # Prepare data for comparison
+        metrics = []
+        actual_values = []
+        predicted_values = []
+
+        # Get actual data from product (if available)
+        if hasattr(product, 'ml_predicted_energy_kwh') and product.ml_predicted_energy_kwh:
+            metrics.append('Énergie (kWh)')
+            actual_values.append(float(product.ml_predicted_energy_kwh))
+            predicted_values.append(predictions.get(
+                'production', {}).get('energy_consumption_kwh', 0))
+
+        if hasattr(product, 'ml_predicted_water_liters') and product.ml_predicted_water_liters:
+            metrics.append('Eau (L)')
+            actual_values.append(float(product.ml_predicted_water_liters))
+            predicted_values.append(predictions.get(
+                'production', {}).get('water_consumption_liters', 0))
+
+        if hasattr(product, 'ml_predicted_employees') and product.ml_predicted_employees:
+            metrics.append('Employés')
+            actual_values.append(float(product.ml_predicted_employees))
+            predicted_values.append(predictions.get(
+                'production', {}).get('total_employees', 0))
+
+        # If no actual ML data, create comparison with traditional calculations
+        if not metrics:
+            # Use traditional oil production calculations - call the function directly since it's in the same file
+            traditional_metrics = calculate_oil_production_metrics(
+                product.quantity, product.quality, product.source
+            )
+
+        if traditional_metrics.get('success'):
+            metrics = [
+                'Coût Eau (TND)', 'Coût Énergie (TND)', 'Coût M.O. (TND)']
+            actual_values = [
+                traditional_metrics.get('cout_eau', 0),
+                traditional_metrics.get('cout_energetique', 0),
+                traditional_metrics.get('cout_main_oeuvre', 0)
+            ]
+            predicted_values = [
+                predictions.get('costs', {}).get('water_cost_tnd', 0),
+                predictions.get('costs', {}).get(
+                    'electricity_cost_tnd', 0),
+                predictions.get('costs', {}).get('labor_cost_tnd', 0)
+            ]
+
+        if not metrics or len(metrics) < 2:
+            raise ValueError("Insufficient data for comparison")
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        x = np.arange(len(metrics))
+        width = 0.35
+
+        # Create bars
+        bars1 = ax.bar(x - width/2, actual_values, width, label='Données Actuelles',
+                       color='#2E86C1', alpha=0.8)
+        bars2 = ax.bar(x + width/2, predicted_values, width, label='Prédictions ML',
+                       color='#E74C3C', alpha=0.8)
+
+        # Add value labels on bars
+        for bar in bars1:
+            height = bar.get_height()
+            ax.annotate(f'{height:.1f}',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),  # 3 points vertical offset
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+        for bar in bars2:
+            height = bar.get_height()
+            ax.annotate(f'{height:.1f}',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),  # 3 points vertical offset
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+        ax.set_xlabel('Métriques', fontsize=12)
+        ax.set_ylabel('Valeurs', fontsize=12)
+        ax.set_title('Comparaison: Données Actuelles vs Prédictions ML',
+                     fontsize=14, fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(metrics, rotation=45, ha='right')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        # Calculate and display accuracy
+        if len(actual_values) == len(predicted_values):
+            errors = [abs(a - p) / max(a, 1) * 100 for a,
+                      p in zip(actual_values, predicted_values)]
+            avg_accuracy = 100 - np.mean(errors)
+            ax.text(0.02, 0.98, f'Précision Moyenne: {avg_accuracy:.1f}%',
+                    transform=ax.transAxes, fontsize=10,
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        plt.tight_layout()
+
+        # Convert to base64
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=150,
+                    bbox_inches='tight', facecolor='white')
+        buffer.seek(0)
+        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        plt.close()
+
+        return image_base64
+
+    except Exception as e:
+        logger.error(f"Error creating actual vs predicted chart: {e}")
+        return create_error_chart(f"Erreur Comparaison:\n{str(e)}")
+
+
+def create_error_chart(error_message):
+    """Create a simple error chart when chart generation fails"""
+    try:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, error_message, horizontalalignment='center',
+                verticalalignment='center', transform=ax.transAxes,
+                fontsize=12, bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.7))
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=150,
+                    bbox_inches='tight', facecolor='white')
+        buffer.seek(0)
+        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        plt.close()
+
+        return image_base64
+    except:
+        return None
+
+
 def calculate_oil_production_metrics(quantity, quality, source):
     """
     Calculate oil production metrics based on product inputs
-    Fixed to handle missing or invalid inputs gracefully
+    Enhanced version with better error handling
     """
     try:
-        # Ensure quantity is numeric and positive
         quantity = float(quantity) if quantity else 0
         if quantity <= 0:
             raise ValueError("Quantity must be positive")
 
-        # Normalize quality input
-        if not quality:
-            quality = 'moyenne'
-        quality = str(quality).lower().strip()
+        quality = str(quality).lower().strip() if quality else 'moyenne'
 
-        # Base calculations based on product model constants
+        # Enhanced mappings
         oil_yield_map = {
-            'excellente': 0.20,
-            'excellent': 0.20,  # Alternative spelling
-            'bonne': 0.18,
-            'good': 0.18,
-            'moyenne': 0.17,
-            'average': 0.17,
-            'mauvaise': 0.15,
-            'poor': 0.15,
-            'bad': 0.15,
+            'excellente': 0.20, 'excellent': 0.20,
+            'bonne': 0.18, 'good': 0.18,
+            'moyenne': 0.17, 'average': 0.17,
+            'mauvaise': 0.15, 'poor': 0.15, 'bad': 0.15,
         }
 
         waste_coefficients = {
-            'excellente': 0.82,
-            'excellent': 0.82,
-            'bonne': 0.835,
-            'good': 0.835,
-            'moyenne': 0.85,
-            'average': 0.85,
-            'mauvaise': 0.875,
-            'poor': 0.875,
-            'bad': 0.875,
+            'excellente': 0.82, 'excellent': 0.82,
+            'bonne': 0.835, 'good': 0.835,
+            'moyenne': 0.85, 'average': 0.85,
+            'mauvaise': 0.875, 'poor': 0.875, 'bad': 0.875,
         }
 
         quality_price_map = {
-            'excellente': 15.0,
-            'excellent': 15.0,
-            'bonne': 12.0,
-            'good': 12.0,
-            'moyenne': 10.0,
-            'average': 10.0,
-            'mauvaise': 8.0,
-            'poor': 8.0,
-            'bad': 8.0,
+            'excellente': 15.0, 'excellent': 15.0,
+            'bonne': 12.0, 'good': 12.0,
+            'moyenne': 10.0, 'average': 10.0,
+            'mauvaise': 8.0, 'poor': 8.0, 'bad': 8.0,
         }
 
-        # Get values with defaults
         oil_yield = oil_yield_map.get(quality, 0.17)
         waste_coefficient = waste_coefficients.get(quality, 0.85)
         oil_price_per_liter = quality_price_map.get(quality, 10.0)
 
-        # Calculate basic metrics
+        # Calculate metrics
         oil_quantity = quantity * oil_yield
         total_waste = quantity * waste_coefficient
 
-        # Split waste into margin (fitoura) and other waste
-        # Fitoura is typically 60-70% of total waste
         fitoura_percentage = 0.65
         dechet_fitoura = total_waste * fitoura_percentage
         dechet_margin = total_waste * (1 - fitoura_percentage)
 
-        # Cost calculations (estimated values - can be adjusted based on actual costs)
-        cout_main_oeuvre = quantity * 0.8  # 0.8 DT per kg
-        cout_eau = oil_quantity * 2.5  # 2.5 DT per liter of oil
-        cout_energetique = quantity * 1.2  # 1.2 DT per kg
-        # 0.02 hours per kg (continuous method)
+        # Enhanced cost calculations with regional factors
+        regional_factors = {
+            'nord': 1.1, 'north': 1.1,
+            'centre': 1.0, 'center': 1.0,
+            'sud': 0.9, 'south': 0.9,
+            'sfax': 1.05
+        }
+
+        source_lower = source.lower() if source else 'centre'
+        regional_factor = 1.0
+        for region, factor in regional_factors.items():
+            if region in source_lower:
+                regional_factor = factor
+                break
+
+        cout_main_oeuvre = quantity * 0.8 * regional_factor
+        cout_eau = oil_quantity * 2.5 * regional_factor
+        cout_energetique = quantity * 1.2 * regional_factor
         temps_pression = quantity * 0.02
 
         cout_total = cout_main_oeuvre + cout_eau + cout_energetique
@@ -107,261 +378,66 @@ def calculate_oil_production_metrics(quantity, quality, source):
             'cout_energetique': round(cout_energetique, 2),
             'temps_pression': round(temps_pression, 2),
             'cout_total': round(cout_total, 2),
+            'regional_factor': regional_factor,
             'success': True
         }
 
     except Exception as e:
         logger.error(f"Error calculating oil production metrics: {e}")
-        return {
-            'error': str(e),
-            'success': False
-        }
+        return {'error': str(e), 'success': False}
 
 
-def create_pie_chart(data, labels, title, colors_list=None):
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def generate_prediction_pdf(request, product_id):
     """
-    Create a pie chart and return it as base64 image
-    Fixed to handle empty data and encoding issues
+    Generate enhanced PDF prediction report with charts
     """
     try:
-        # Validate inputs
-        if not data or not labels or len(data) != len(labels):
-            raise ValueError("Invalid data or labels for pie chart")
+        # Get the product
+        try:
+            product = get_object_or_404(Product, id=product_id)
+        except:
+            return Response({
+                'error': 'Product not found',
+                'success': False
+            }, status=status.HTTP_404_NOT_FOUND)
 
-        # Filter out zero or negative values
-        filtered_data = []
-        filtered_labels = []
-        for d, l in zip(data, labels):
-            if d > 0:
-                filtered_data.append(d)
-                filtered_labels.append(l)
+        if not global_prediction_service.is_loaded:
+            return Response({
+                'error': 'ML service not available',
+                'success': False
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        if not filtered_data:
-            raise ValueError("No positive data values for pie chart")
-
-        # Create figure
-        plt.figure(figsize=(8, 6))
-        fig, ax = plt.subplots(figsize=(8, 6))
-
-        if colors_list is None:
-            colors_list = ['#FF6B6B', '#4ECDC4', '#45B7D1',
-                           '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE']
-
-        # Ensure we have enough colors
-        while len(colors_list) < len(filtered_data):
-            colors_list.extend(colors_list)
-
-        wedges, texts, autotexts = ax.pie(
-            filtered_data,
-            labels=filtered_labels,
-            autopct='%1.1f%%',
-            startangle=90,
-            colors=colors_list[:len(filtered_data)]
+        # Get enhanced predictions
+        predictions = global_prediction_service.predict_costs_and_production(
+            source=product.source or 'Centre',
+            quantity=product.quantity,
+            quality=product.quality
         )
 
-        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+        if not predictions:
+            return Response({
+                'error': 'Unable to generate predictions for this product',
+                'success': False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Make percentage text bold and white
-        for autotext in autotexts:
-            autotext.set_color('white')
-            autotext.set_fontweight('bold')
-            autotext.set_fontsize(10)
+        # Get traditional calculations for comparison
+        traditional_metrics = calculate_oil_production_metrics(
+            product.quantity, product.quality, product.source
+        )
 
-        plt.tight_layout()
+        # Create PDF
+        response = HttpResponse(content_type='application/pdf')
+        response[
+            'Content-Disposition'] = f'attachment; filename="enhanced_prediction_report_product_{product.id}.pdf"'
 
-        # Convert to base64
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png', dpi=150,
-                    bbox_inches='tight', facecolor='white')
-        buffer.seek(0)
-        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        plt.close()
-
-        return image_base64
-
-    except Exception as e:
-        logger.error(f"Error creating pie chart: {e}")
-        # Create a simple error chart
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.text(0.5, 0.5, f'Chart Error:\n{str(e)}',
-                horizontalalignment='center', verticalalignment='center',
-                transform=ax.transAxes, fontsize=12)
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis('off')
-
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png', dpi=150,
-                    bbox_inches='tight', facecolor='white')
-        buffer.seek(0)
-        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        plt.close()
-
-        return image_base64
-
-
-def create_line_chart(real_data, predicted_data, error_margins, labels, title):
-    """
-    Create a line chart comparing real vs predicted data with error margins
-    Fixed to handle missing data and mismatched array lengths
-    """
-    try:
-        # Validate inputs
-        if not all([real_data, predicted_data, labels]):
-            raise ValueError("Missing required data for line chart")
-
-        # Ensure all arrays have the same length
-        min_length = min(len(real_data), len(predicted_data), len(labels))
-        if min_length == 0:
-            raise ValueError("Empty data arrays")
-
-        real_data = real_data[:min_length]
-        predicted_data = predicted_data[:min_length]
-        labels = labels[:min_length]
-
-        if error_margins:
-            error_margins = error_margins[:min_length]
-        else:
-            # Create default error margins if not provided
-            error_margins = [abs(r - p) * 0.1 for r,
-                             p in zip(real_data, predicted_data)]
-
-        # Create figure
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        x = np.arange(len(labels))
-
-        # Plot real data
-        ax.plot(x, real_data, 'o-', label='Données Réelles',
-                color='#2E86C1', linewidth=2, markersize=8)
-
-        # Plot predicted data
-        ax.plot(x, predicted_data, 's-', label='Données Prédites',
-                color='#E74C3C', linewidth=2, markersize=8)
-
-        # Add error margins as shaded area
-        lower_bounds = np.array(predicted_data) - np.array(error_margins)
-        upper_bounds = np.array(predicted_data) + np.array(error_margins)
-
-        ax.fill_between(x, lower_bounds, upper_bounds,
-                        alpha=0.3, color='#E74C3C', label='Marge d\'Erreur')
-
-        ax.set_xlabel('Points de Données', fontsize=12)
-        ax.set_ylabel('Valeurs', fontsize=12)
-        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=45)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-
-        # Convert to base64
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png', dpi=150,
-                    bbox_inches='tight', facecolor='white')
-        buffer.seek(0)
-        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        plt.close()
-
-        return image_base64
-
-    except Exception as e:
-        logger.error(f"Error creating line chart: {e}")
-        # Create error chart
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.text(0.5, 0.5, f'Chart Error:\n{str(e)}',
-                horizontalalignment='center', verticalalignment='center',
-                transform=ax.transAxes, fontsize=12)
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis('off')
-
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png', dpi=150,
-                    bbox_inches='tight', facecolor='white')
-        buffer.seek(0)
-        image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        plt.close()
-
-        return image_base64
-
-
-def create_prediction_table(inputs, outputs):
-    """
-    Create the main prediction table in key-value format for better readability
-    Fixed to handle missing data gracefully
-    """
-    try:
-        table_data = []
-
-        # Safely get values with defaults
-        def safe_get(d, key, default="N/A"):
-            return str(d.get(key, default)) if isinstance(d, dict) else str(default)
-
-        # Section headers and data in key-value pairs
-        sections = [
-            ("DONNÉES D'ENTRÉE", [
-                ("Quantité", f"{safe_get(inputs, 'quantite')} kg"),
-                ("Qualité", safe_get(inputs, 'qualite')),
-                ("Source", safe_get(inputs, 'source')),
-                ("Type de Presse", safe_get(inputs, 'type_presse', 'Continue')),
-            ]),
-            ("RÉSULTATS DE PRODUCTION", [
-                ("Qualité de l'Huile", safe_get(outputs, 'qualite_oil')),
-                ("Quantité d'Huile", f"{safe_get(outputs, 'quantite_oil')} L"),
-                ("Déchet Fitoura",
-                 f"{safe_get(outputs, 'dechet_fitoura')} kg"),
-                ("Déchet Margin", f"{safe_get(outputs, 'dechet_margin')} kg"),
-            ]),
-            ("ANALYSE FINANCIÈRE", [
-                ("Prix par Litre", f"{safe_get(outputs, 'prix_litre')} DT"),
-                ("Coût Main d'Œuvre",
-                 f"{safe_get(outputs, 'cout_main_oeuvre')} DT"),
-                ("Coût Eau", f"{safe_get(outputs, 'cout_eau')} DT"),
-                ("Coût Énergétique",
-                 f"{safe_get(outputs, 'cout_energetique')} DT"),
-                ("Temps de Pression",
-                 f"{safe_get(outputs, 'temps_pression')} h"),
-                ("Coût Total", f"{safe_get(outputs, 'cout_total')} DT"),
-            ])
-        ]
-
-        # Create table with 2 columns: Key and Value
-        for section_title, section_data in sections:
-            # Add section header
-            table_data.append([section_title, ""])
-
-            # Add key-value pairs for this section
-            for key, value in section_data:
-                table_data.append([key, str(value)])
-
-            # Add empty row for spacing between sections
-            table_data.append(["", ""])
-
-        # Remove the last empty row
-        if table_data and table_data[-1] == ["", ""]:
-            table_data.pop()
-
-        return table_data
-
-    except Exception as e:
-        logger.error(f"Error creating prediction table: {e}")
-        return [["Erreur", f"Impossible de créer le tableau: {str(e)}"]]
-
-
-def generate_prediction_pdf_with_ml_data(product_id, product, predictions):
-    """
-    Generate PDF report using ML predictions from the enhanced service
-    Fixed to work with the actual views.py ML prediction structure
-    """
-    try:
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4,
+        doc = SimpleDocTemplate(response, pagesize=A4,
                                 topMargin=2*cm, bottomMargin=2*cm)
-
-        # Get styles
+        story = []
         styles = getSampleStyleSheet()
+
+        # Custom styles
         title_style = ParagraphStyle(
             'CustomTitle',
             parent=styles['Heading1'],
@@ -371,15 +447,21 @@ def generate_prediction_pdf_with_ml_data(product_id, product, predictions):
             textColor=colors.darkblue
         )
 
-        story = []
+        subtitle_style = ParagraphStyle(
+            'CustomSubtitle',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=15,
+            textColor=colors.darkgreen
+        )
 
         # Title
-        story.append(
-            Paragraph(f"Rapport de Prédiction ML - Produit #{product_id}", title_style))
+        story.append(Paragraph(
+            f"Rapport de Prédiction Avancé - Produit #{product.id}", title_style))
         story.append(Spacer(1, 20))
 
-        # Product Information Section
-        story.append(Paragraph("Informations du Produit", styles['Heading2']))
+        # Product Information
+        story.append(Paragraph("Informations du Produit", subtitle_style))
 
         product_info = [
             ['Propriété', 'Valeur'],
@@ -406,10 +488,75 @@ def generate_prediction_pdf_with_ml_data(product_id, product, predictions):
         story.append(product_table)
         story.append(Spacer(1, 30))
 
+        # Charts Section
+        story.append(Paragraph("Analyses Graphiques", subtitle_style))
+
+        charts_created = 0
+
+        # 1. Waste Partition Chart
+        if traditional_metrics and traditional_metrics.get('success'):
+            try:
+                fitoura = traditional_metrics.get('dechet_fitoura', 0)
+                margin = traditional_metrics.get('dechet_margin', 0)
+
+                if fitoura > 0 or margin > 0:
+                    story.append(
+                        Paragraph("Répartition des Déchets", styles['Heading3']))
+                    waste_chart_base64 = create_waste_partition_chart(
+                        fitoura, margin)
+
+                    if waste_chart_base64:
+                        waste_chart_img = Image(io.BytesIO(
+                            base64.b64decode(waste_chart_base64)))
+                        waste_chart_img.drawWidth = 400
+                        waste_chart_img.drawHeight = 300
+                        story.append(waste_chart_img)
+                        story.append(Spacer(1, 20))
+                        charts_created += 1
+            except Exception as e:
+                logger.warning(f"Could not create waste chart: {e}")
+
+        # 2. Cost Distribution Chart
+        if predictions and 'costs' in predictions:
+            try:
+                story.append(
+                    Paragraph("Répartition des Coûts", styles['Heading3']))
+                cost_chart_base64 = create_cost_distribution_chart(
+                    predictions['costs'])
+
+                if cost_chart_base64:
+                    cost_chart_img = Image(io.BytesIO(
+                        base64.b64decode(cost_chart_base64)))
+                    cost_chart_img.drawWidth = 400
+                    cost_chart_img.drawHeight = 300
+                    story.append(cost_chart_img)
+                    story.append(Spacer(1, 20))
+                    charts_created += 1
+            except Exception as e:
+                logger.warning(f"Could not create cost chart: {e}")
+
+        # 3. Actual vs Predicted Chart
+        try:
+            story.append(
+                Paragraph("Comparaison: Données Actuelles vs Prédictions", styles['Heading3']))
+            comparison_chart_base64 = create_actual_vs_predicted_chart(
+                product, predictions)
+
+            if comparison_chart_base64:
+                comparison_chart_img = Image(io.BytesIO(
+                    base64.b64decode(comparison_chart_base64)))
+                comparison_chart_img.drawWidth = 500
+                comparison_chart_img.drawHeight = 300
+                story.append(comparison_chart_img)
+                story.append(Spacer(1, 20))
+                charts_created += 1
+        except Exception as e:
+            logger.warning(f"Could not create comparison chart: {e}")
+
         # ML Predictions Section
         if predictions:
             story.append(
-                Paragraph("Prédictions Machine Learning", styles['Heading2']))
+                Paragraph("Prédictions Machine Learning", subtitle_style))
 
             # Cost predictions
             if 'costs' in predictions:
@@ -479,103 +626,130 @@ def generate_prediction_pdf_with_ml_data(product_id, product, predictions):
                 story.append(production_table)
                 story.append(Spacer(1, 20))
 
-        # Create charts if we have sufficient data
-        try:
-            charts_created = False
+        # Traditional Analysis Section
+        if traditional_metrics and traditional_metrics.get('success'):
+            story.append(Paragraph("Analyse Traditionnelle", subtitle_style))
 
-            # Cost breakdown pie chart
-            if predictions and 'costs' in predictions:
-                costs = predictions['costs']
-                cost_values = [
-                    costs.get('electricity_cost_tnd', 0),
-                    costs.get('water_cost_tnd', 0),
-                    costs.get('labor_cost_tnd', 0)
-                ]
-                cost_labels = ['Électricité', 'Eau', 'Main d\'Œuvre']
+            traditional_data = [
+                ['Métrique', 'Valeur'],
+                ['Quantité d\'Huile',
+                    f"{traditional_metrics.get('quantite_oil', 0)} L"],
+                ['Déchet Fitoura',
+                    f"{traditional_metrics.get('dechet_fitoura', 0)} kg"],
+                ['Déchet Margin',
+                    f"{traditional_metrics.get('dechet_margin', 0)} kg"],
+                ['Prix par Litre',
+                    f"{traditional_metrics.get('prix_litre', 0)} TND"],
+                ['Coût Main d\'Œuvre',
+                    f"{traditional_metrics.get('cout_main_oeuvre', 0)} TND"],
+                ['Coût Eau', f"{traditional_metrics.get('cout_eau', 0)} TND"],
+                ['Coût Énergétique',
+                    f"{traditional_metrics.get('cout_energetique', 0)} TND"],
+                ['Coût Total',
+                    f"{traditional_metrics.get('cout_total', 0)} TND"]
+            ]
 
-                if sum(cost_values) > 0:
-                    story.append(
-                        Paragraph("Répartition des Coûts", styles['Heading3']))
-                    pie_chart_base64 = create_pie_chart(
-                        cost_values,
-                        cost_labels,
-                        "Répartition des Coûts Opérationnels"
-                    )
+            traditional_table = Table(traditional_data, colWidths=[7*cm, 4*cm])
+            traditional_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkslateblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.thistle),
+            ]))
 
-                    if pie_chart_base64:
-                        pie_chart_img = Image(io.BytesIO(
-                            base64.b64decode(pie_chart_base64)))
-                        pie_chart_img.drawWidth = 200
-                        pie_chart_img.drawHeight = 150
-                        story.append(pie_chart_img)
-                        story.append(Spacer(1, 20))
-                        charts_created = True
+            story.append(traditional_table)
+            story.append(Spacer(1, 30))
 
-        except Exception as e:
-            logger.warning(f"Could not create charts: {e}")
+        # Summary section
+        if charts_created > 0:
+            story.append(Paragraph("Résumé de l'Analyse", subtitle_style))
+            summary_text = f"""
+            Ce rapport présente une analyse complète du produit #{product.id} incluant:
+            
+            • {charts_created} graphiques d'analyse visuelle
+            • Prédictions ML avancées pour les coûts et la production
+            • Comparaison avec les méthodes traditionnelles
+            • Répartition détaillée des déchets et des coûts
+            
+            Les prédictions sont basées sur des modèles d'apprentissage automatique 
+            entraînés sur des données historiques de production d'huile d'olive.
+            """
+            story.append(Paragraph(summary_text, styles['Normal']))
+            story.append(Spacer(1, 20))
 
         # Footer
         story.append(Paragraph(
             "Rapport généré par le Service de Prédiction ML Avancé", styles['Normal']))
         story.append(Paragraph(
             f"Généré le: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        story.append(
+            Paragraph(f"Utilisateur: {request.user.username}", styles['Normal']))
 
         # Build PDF
         doc.build(story)
-        buffer.seek(0)
-
-        return buffer
+        return response
 
     except Exception as e:
-        logger.error(f"Error generating ML prediction PDF: {e}")
-        # Create error PDF
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
-        styles = getSampleStyleSheet()
-        story = [
-            Paragraph("Erreur de Génération PDF", styles['Title']),
-            Paragraph(f"Une erreur s'est produite: {str(e)}", styles['Normal'])
-        ]
-        doc.build(story)
-        buffer.seek(0)
-        return buffer
+        logger.error(f"Error generating enhanced prediction PDF: {e}")
+        return Response({
+            'error': f'Failed to generate enhanced prediction PDF: {str(e)}',
+            'success': False
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-def create_sample_data_for_testing():
+# Additional utility function for chart validation
+def validate_chart_data(data, chart_type):
     """
-    Create sample data for testing the charts and functions
+    Validate data before chart creation to prevent errors
     """
-    return {
-        'real_data': [85, 92, 78, 88, 95],
-        'predicted_data': [82, 89, 81, 85, 93],
-        'error_margins': [3, 4, 3.5, 3, 2.5],
-        'labels': ['Lot 1', 'Lot 2', 'Lot 3', 'Lot 4', 'Lot 5'],
-        'sample_inputs': {
-            'quantite': 1000,
-            'qualite': 'bonne',
-            'source': 'Centre',
-            'type_presse': 'Continue'
-        }
-    }
+    try:
+        if chart_type == 'waste':
+            fitoura, margin = data
+            return fitoura > 0 or margin > 0
+
+        elif chart_type == 'cost':
+            costs = data
+            return any(costs.get(key, 0) > 0 for key in ['electricity_cost_tnd', 'water_cost_tnd', 'labor_cost_tnd'])
+
+        elif chart_type == 'comparison':
+            product, predictions = data
+            # Check if we have either ML data or traditional data for comparison
+            has_ml_data = any([
+                hasattr(
+                    product, 'ml_predicted_energy_kwh') and product.ml_predicted_energy_kwh,
+                hasattr(
+                    product, 'ml_predicted_water_liters') and product.ml_predicted_water_liters,
+                hasattr(
+                    product, 'ml_predicted_employees') and product.ml_predicted_employees
+            ])
+
+            has_predictions = predictions and (
+                'costs' in predictions or 'production' in predictions)
+
+            return has_ml_data or has_predictions
+
+        return False
+
+    except Exception as e:
+        logger.warning(f"Error validating chart data for {chart_type}: {e}")
+        return False
 
 
-def validate_pdf_inputs(inputs, outputs):
+# Enhanced error handling for matplotlib
+def safe_matplotlib_operation(operation_func, *args, **kwargs):
     """
-    Validate inputs and outputs for PDF generation
+    Safely execute matplotlib operations with proper cleanup
     """
-    errors = []
-
-    # Validate inputs
-    required_input_fields = ['quantite', 'qualite']
-    for field in required_input_fields:
-        if not inputs or field not in inputs or not inputs[field]:
-            errors.append(f"Missing required input field: {field}")
-
-    # Validate outputs
-    if not outputs or not isinstance(outputs, dict):
-        errors.append("Missing or invalid outputs data")
-    elif not outputs.get('success', False):
-        errors.append(
-            f"Output calculation failed: {outputs.get('error', 'Unknown error')}")
-
-    return errors
+    try:
+        return operation_func(*args, **kwargs)
+    except Exception as e:
+        logger.error(f"Matplotlib operation failed: {e}")
+        plt.close('all')  # Clean up any open figures
+        return None
+    finally:
+        # Ensure memory cleanup
+        plt.clf()
+        plt.cla()
