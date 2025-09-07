@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - oilapp</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+            padding: 40px;
+            animation: slideUp 0.6s ease-out;
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .logo {
+            font-size: 32px;
+            font-weight: bold;
+            color: #2c5aa0;
+            margin-bottom: 30px;
+        }
+        
+        .icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+        }
+        
+        .success-icon {
+            color: #28a745;
+        }
+        
+        .error-icon {
+            color: #dc3545;
+        }
+        
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #333;
+        }
+        
+        .message {
+            font-size: 16px;
+            line-height: 1.6;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .user-info {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: left;
+        }
+        
+        .user-info h4 {
+            color: #2c5aa0;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .user-info p {
+            margin-bottom: 8px;
+            color: #555;
+        }
+        
+        .user-info strong {
+            color: #333;
+        }
+        
+        .action-buttons {
+            margin-top: 30px;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 12px 30px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: bold;
+            margin: 0 10px;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+        
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 30px 20px;
+            }
+            
+            .icon {
+                font-size: 60px;
+            }
+            
+            .title {
+                font-size: 20px;
+            }
+            
+            .btn {
+                display: block;
+                margin: 10px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🛢️ oilapp</div>
+        
+        {% if success %}
+            <div class="icon success-icon">✅</div>
+            <h1 class="title">{{ title }}</h1>
+            <p class="message">{{ message }}</p>
+            
+            {% if user %}
+                <div class="user-info">
+                    <h4>📋 Informations du compte</h4>
+                    <p><strong>Nom d'utilisateur :</strong> {{ user.username }}</p>
+                    <p><strong>E-mail :</strong> {{ user.email }}</p>
+                    <p><strong>CIN :</strong> {{ user.cin }}</p>
+                    <p><strong>Rôle :</strong> {{ user.get_role_display }}</p>
+                    <p><strong>Ville :</strong> {{ user.ville }}</p>
+                    <p><strong>Statut :</strong> <span style="color: #28a745;">✅ Compte vérifié</span></p>
+                </div>
+            {% endif %}
+            
+            <div class="action-buttons">
+                <a href="#" class="btn btn-primary" onclick="window.close();">
+                    🔐 Me connecter maintenant
+                </a>
+                <a href="#" class="btn btn-secondary" onclick="window.close();">
+                    📱 Retour à l'application
+                </a>
+            </div>
+            
+        {% else %}
+            <div class="icon error-icon">❌</div>
+            <h1 class="title">{{ title }}</h1>
+            <p class="message">{{ message }}</p>
+            
+            <div class="action-buttons">
+                <a href="#" class="btn btn-secondary" onclick="window.close();">
+                    🔙 Retour
+                </a>
+            </div>
+        {% endif %}
+        
+        <div class="footer">
+            <p>Si vous avez des questions, contactez notre équipe de support.</p>
+            <p><strong>L'équipe oilapp</strong></p>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-redirect to Flutter app after successful verification
+        {% if success %}
+            setTimeout(function() {
+                window.location.href = 'http://localhost:64096/';
+            }, 3000); // Redirect after 3 seconds
+        {% endif %}
+    </script>
+</body>
+</html>

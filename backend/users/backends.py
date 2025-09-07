@@ -2,6 +2,7 @@ from django.contrib.auth.backends import ModelBackend
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.conf import settings
+from rest_framework import exceptions
 import time
 import logging
 
@@ -11,7 +12,7 @@ User = get_user_model()
 
 class SecureAuthBackend(ModelBackend):
     """
-    Enhanced authentication backend with security features
+    Enhanced authentication backend with security features and email verification
     """
 
     def authenticate(self, request, username=None, password=None, **kwargs):
@@ -35,6 +36,14 @@ class SecureAuthBackend(ModelBackend):
 
         # Verify password
         if user.check_password(password):
+            # Check email verification (skip for admins/superusers)
+            if not user.isVerified and not user.is_superuser and user.role != 'ADMIN':
+                logger.warning(
+                    f'Login attempt on unverified account: {user.email}')
+                raise exceptions.AuthenticationFailed(
+                    'Please verify your email address before logging in. Check your email for verification instructions.'
+                )
+
             self._clear_failed_attempts(user)
             logger.info(f'Successful login for user: {user.email}')
             return user
@@ -87,23 +96,33 @@ class SecureAuthBackend(ModelBackend):
             logger.info(
                 f'Failed attempt {attempts}/{max_attempts} for user: {user.email}')
 
-        # Also update the user model
+        # Also update the user model (if these fields exist)
         from django.utils import timezone
-        user.failed_login_attempts = attempts
-        user.last_failed_login = timezone.now()
-        user.save(update_fields=['failed_login_attempts', 'last_failed_login'])
+        if hasattr(user, 'failed_login_attempts'):
+            user.failed_login_attempts = attempts
+            user.save(update_fields=['failed_login_attempts'])
+
+        if hasattr(user, 'last_failed_login'):
+            user.last_failed_login = timezone.now()
+            user.save(update_fields=['last_failed_login'])
 
     def _clear_failed_attempts(self, user):
         """Clear failed attempts after successful login"""
         cache_key = f'lockout_{user.id}'
         cache.delete(cache_key)
 
-        # Clear from user model too
-        if user.failed_login_attempts > 0:
+        # Clear from user model too (if these fields exist)
+        fields_to_update = []
+        if hasattr(user, 'failed_login_attempts') and user.failed_login_attempts > 0:
             user.failed_login_attempts = 0
+            fields_to_update.append('failed_login_attempts')
+
+        if hasattr(user, 'last_failed_login') and user.last_failed_login:
             user.last_failed_login = None
-            user.save(update_fields=[
-                      'failed_login_attempts', 'last_failed_login'])
+            fields_to_update.append('last_failed_login')
+
+        if fields_to_update:
+            user.save(update_fields=fields_to_update)
             logger.info(f'Cleared failed attempts for user: {user.email}')
 
     def get_lockout_info(self, user):
@@ -144,3 +163,27 @@ class SecureAuthBackend(ModelBackend):
             'max_attempts': getattr(settings, 'ACCOUNT_LOCKOUT_ATTEMPTS', 5),
             'remaining_attempts': getattr(settings, 'ACCOUNT_LOCKOUT_ATTEMPTS', 5)
         }
+
+    def user_can_authenticate(self, user):
+        """
+        Reject users with is_active=False. Custom user models that don't have
+        an `is_active` field are allowed.
+        """
+        is_active = getattr(user, 'is_active', None)
+        isActive = getattr(user, 'isActive', None)
+
+        # Check Django's built-in is_active field
+        if is_active is not None and not is_active:
+            return False
+
+        # Check custom isActive field
+        if isActive is not None and not isActive:
+            return False
+
+        # Check email verification for non-admin users
+        if not user.is_superuser and user.role != 'ADMIN':
+            # Default to True if field doesn't exist
+            if not getattr(user, 'isVerified', True):
+                return False
+
+        return True

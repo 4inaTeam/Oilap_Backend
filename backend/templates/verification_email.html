@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vérifiez votre compte - oilapp</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            background-color: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo h1 {
+            color: #2c5aa0;
+            margin: 0;
+            font-size: 28px;
+        }
+        .content {
+            text-align: center;
+        }
+        .welcome-text {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #555;
+        }
+        .message {
+            margin-bottom: 30px;
+            font-size: 16px;
+            color: #666;
+        }
+        .verify-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            padding: 15px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+            font-size: 18px;
+            font-weight: bold;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+            transition: all 0.3s ease;
+        }
+        .verify-button:hover {
+            background: linear-gradient(135deg, #45a049 0%, #4CAF50 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+        }
+        .alternative-link {
+            margin-top: 30px;
+            font-size: 14px;
+            color: #888;
+        }
+        .alternative-link a {
+            color: #2c5aa0;
+            word-break: break-all;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 30px;
+            font-size: 14px;
+            color: #856404;
+        }
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            font-size: 14px;
+            color: #888;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>🛢️ oilapp</h1>
+        </div>
+        
+        <div class="content">
+            <h2 class="welcome-text">Bonjour {{ user.username }},</h2>
+            
+            <div class="message">
+                <p>Félicitations ! Votre compte oilapp a été créé avec succès.</p>
+                <p>Pour activer votre compte et commencer à utiliser nos services, veuillez vérifier votre adresse e-mail en cliquant sur le bouton ci-dessous :</p>
+            </div>
+            
+            <a href="{{ verification_url }}" class="verify-button">
+                ✅ Vérifier votre compte
+            </a>
+            
+            <div class="alternative-link">
+                <p>Si le bouton ne fonctionne pas, copiez et collez ce lien dans votre navigateur :</p>
+                <a href="{{ verification_url }}">{{ verification_url }}</a>
+            </div>
+            
+            <div class="warning">
+                <strong>⚠️ Important :</strong>
+                <ul style="text-align: left; margin: 10px 0;">
+                    <li>Ce lien expire dans 24 heures</li>
+                    <li>Vous ne pourrez pas vous connecter tant que votre e-mail n'est pas vérifié</li>
+                    <li>Si vous n'avez pas demandé la création de ce compte, ignorez cet e-mail</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Cordialement,<br><strong>L'équipe oilapp</strong></p>
+            <p style="font-size: 12px;">Cet e-mail a été envoyé automatiquement, merci de ne pas y répondre.</p>
+        </div>
+    </div>
+</body>
+</html>

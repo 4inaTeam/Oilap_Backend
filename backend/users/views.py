@@ -4,11 +4,17 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django.db import transaction
 from django.core.cache import cache
+from django.shortcuts import render, get_object_or_404
+from django.http import HttpResponse
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from django.db import models
 import hashlib
 import json
 import logging
 
-from .models import CustomUser, Client
+from .models import CustomUser, Client, EmailVerificationToken
 from .serializers import (
     CustomUserSerializer,
     UserProfileSerializer,
@@ -18,10 +24,9 @@ from .serializers import (
     ClientUpdateSerializer,
     EmployeeAccountantUpdateSerializer
 )
+from .email_service import EmailVerificationService
 
 logger = logging.getLogger(__name__)
-
-# Simple cache manager (inline to avoid import issues)
 
 
 class SimpleCacheManager:
@@ -82,11 +87,16 @@ class UserCreateView(generics.CreateAPIView):
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
 
-        # Clear user list cache after creating new user
+        # Send verification email after successful user creation
         if response.status_code == status.HTTP_201_CREATED:
+            user = CustomUser.objects.get(id=response.data['id'])
+            EmailVerificationService.send_verification_email(user)
+
+            # Clear user list cache after creating new user
             SimpleCacheManager.delete_cache('users_list', 'all')
             SimpleCacheManager.delete_cache('total_clients')
-            logger.info("Cache cleared after user creation")
+            logger.info(
+                f"Cache cleared and verification email sent after user creation: {user.id}")
 
         return response
 
@@ -103,10 +113,14 @@ class ClientCreateView(generics.CreateAPIView):
             created_by=self.request.user
         )
 
+        # Send verification email to new client
+        EmailVerificationService.send_verification_email(user)
+
         # Clear cache after creating client
         SimpleCacheManager.delete_cache('users_list', 'all')
         SimpleCacheManager.delete_cache('total_clients')
-        logger.info(f"Cache cleared after client creation: {user.id}")
+        logger.info(
+            f"Cache cleared and verification email sent after client creation: {user.id}")
 
 
 class UserListView(APIView):
@@ -117,7 +131,7 @@ class UserListView(APIView):
         role_filter = request.query_params.get('role', None)
         cin_search = request.query_params.get('cin', None)
         name_search = request.query_params.get('name', None)
-        
+
         # Create cache key based on filters
         cache_params = {}
         if role_filter:
@@ -126,40 +140,45 @@ class UserListView(APIView):
             cache_params['cin'] = cin_search
         if name_search:
             cache_params['name'] = name_search
-            
+
         # Try cache first with filter parameters
-        cache_key_suffix = 'all' if not cache_params else str(sorted(cache_params.items()))
-        cached_users = SimpleCacheManager.get_cache('users_list', cache_key_suffix)
+        cache_key_suffix = 'all' if not cache_params else str(
+            sorted(cache_params.items()))
+        cached_users = SimpleCacheManager.get_cache(
+            'users_list', cache_key_suffix)
         if cached_users:
-            logger.info(f"Cache hit for user list with filters: {cache_params}")
+            logger.info(
+                f"Cache hit for user list with filters: {cache_params}")
             return Response(cached_users)
 
         # Start with all users
         users_queryset = CustomUser.objects.all()
-        
+
         # Apply role filter if provided
         if role_filter:
             # Validate role filter
             valid_roles = ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT', 'CLIENT']
             if role_filter.upper() in valid_roles:
-                users_queryset = users_queryset.filter(role=role_filter.upper())
+                users_queryset = users_queryset.filter(
+                    role=role_filter.upper())
             else:
                 return Response(
-                    {"error": f"Invalid role. Valid roles are: {', '.join(valid_roles)}"}, 
+                    {"error": f"Invalid role. Valid roles are: {', '.join(valid_roles)}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-        
+
         # Apply CIN search if provided
         if cin_search:
             users_queryset = users_queryset.filter(cin__icontains=cin_search)
-            
-        # Apply name search if provided  
+
+        # Apply name search if provided
         if name_search:
-            users_queryset = users_queryset.filter(username__icontains=name_search)
+            users_queryset = users_queryset.filter(
+                username__icontains=name_search)
 
         # Get the filtered users
         users = users_queryset.order_by('-id')  # Order by newest first
-        
+
         data = [
             {
                 "id": user.id,
@@ -170,6 +189,7 @@ class UserListView(APIView):
                 "tel": user.tel,
                 "profile_photo": user.profile_photo.url if user.profile_photo else None,
                 "isActive": user.isActive,
+                "isVerified": user.isVerified,
                 "ville": user.ville
             } for user in users
         ]
@@ -186,42 +206,49 @@ class UserListView(APIView):
         """
         # Get search criteria from request body
         search_criteria = request.data
-        
+
         role_filter = search_criteria.get('role', None)
         cin_search = search_criteria.get('cin', None)
         name_search = search_criteria.get('name', None)
         is_active = search_criteria.get('isActive', None)
         ville_filter = search_criteria.get('ville', None)
-        
+        is_verified = search_criteria.get('isVerified', None)
+
         # Start with all users
         users_queryset = CustomUser.objects.all()
-        
+
         # Apply filters
         if role_filter:
             valid_roles = ['ADMIN', 'EMPLOYEE', 'ACCOUNTANT', 'CLIENT']
             if role_filter.upper() in valid_roles:
-                users_queryset = users_queryset.filter(role=role_filter.upper())
+                users_queryset = users_queryset.filter(
+                    role=role_filter.upper())
             else:
                 return Response(
-                    {"error": f"Invalid role. Valid roles are: {', '.join(valid_roles)}"}, 
+                    {"error": f"Invalid role. Valid roles are: {', '.join(valid_roles)}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-        
+
         if cin_search:
             users_queryset = users_queryset.filter(cin__icontains=cin_search)
-            
+
         if name_search:
-            users_queryset = users_queryset.filter(username__icontains=name_search)
-            
+            users_queryset = users_queryset.filter(
+                username__icontains=name_search)
+
         if is_active is not None:
             users_queryset = users_queryset.filter(isActive=is_active)
-            
+
         if ville_filter:
-            users_queryset = users_queryset.filter(ville__icontains=ville_filter)
+            users_queryset = users_queryset.filter(
+                ville__icontains=ville_filter)
+
+        if is_verified is not None:
+            users_queryset = users_queryset.filter(isVerified=is_verified)
 
         # Get the filtered users
         users = users_queryset.order_by('-id')
-        
+
         data = [
             {
                 "id": user.id,
@@ -232,12 +259,12 @@ class UserListView(APIView):
                 "tel": user.tel,
                 "profile_photo": user.profile_photo.url if user.profile_photo else None,
                 "isActive": user.isActive,
+                "isVerified": user.isVerified,
                 "ville": user.ville
             } for user in users
         ]
 
         return Response(data)
-
 
 
 class UserDeleteView(generics.DestroyAPIView):
@@ -539,3 +566,188 @@ class UserReactivateView(APIView):
             'message': 'Client reactivated successfully.',
             'user': serializer.data
         }, status=status.HTTP_200_OK)
+
+
+# Email Verification Views
+
+class EmailVerificationView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        """Verify email using token from URL"""
+        try:
+            # Get the token
+            verification_token = get_object_or_404(
+                EmailVerificationToken, token=token)
+
+            # Check if token is valid
+            if not verification_token.is_valid():
+                if verification_token.is_used:
+                    return render(request, 'verification_result.html', {
+                        'success': False,
+                        'message': 'Ce lien de vérification a déjà été utilisé.',
+                        'title': 'Lien déjà utilisé'
+                    })
+                else:
+                    return render(request, 'verification_result.html', {
+                        'success': False,
+                        'message': 'Ce lien de vérification a expiré. Contactez l\'administrateur pour obtenir un nouveau lien.',
+                        'title': 'Lien expiré'
+                    })
+
+            # Verify the user
+            user = verification_token.user
+            user.isVerified = True
+            user.save()
+
+            # Mark token as used
+            verification_token.is_used = True
+            verification_token.save()
+
+            # Clear relevant cache
+            SimpleCacheManager.delete_cache('user_profile', user.id)
+            SimpleCacheManager.delete_cache('user_by_id', user.id)
+            if hasattr(user, 'cin'):
+                SimpleCacheManager.delete_cache('user_by_cin', user.cin)
+                if user.role == 'CLIENT':
+                    SimpleCacheManager.delete_cache('client_by_cin', user.cin)
+
+            logger.info(f"Email verified successfully for user: {user.id}")
+
+            return render(request, 'verification_result.html', {
+                'success': True,
+                'message': f'Félicitations {user.username} ! Votre adresse e-mail a été vérifiée avec succès. Vous pouvez maintenant vous connecter à votre compte.',
+                'title': 'Vérification réussie',
+                'user': user
+            })
+
+        except Exception as e:
+            logger.error(f"Email verification error: {e}")
+            return render(request, 'verification_result.html', {
+                'success': False,
+                'message': 'Une erreur s\'est produite lors de la vérification. Veuillez réessayer ou contacter le support.',
+                'title': 'Erreur de vérification'
+            })
+
+
+class ResendVerificationEmailView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def post(self, request, user_id):
+        """Resend verification email to a user"""
+        try:
+            user = get_object_or_404(CustomUser, id=user_id)
+
+            # Check if user is already verified
+            if user.isVerified:
+                return Response({
+                    'message': 'Cet utilisateur a déjà vérifié son e-mail.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if user is admin/superuser (they don't need verification)
+            if user.is_superuser or user.role == 'ADMIN':
+                user.isVerified = True
+                user.save()
+                return Response({
+                    'message': f'Utilisateur administrateur automatiquement vérifié: {user.email}'
+                }, status=status.HTTP_200_OK)
+
+            # Resend verification email
+            success = EmailVerificationService.resend_verification_email(user)
+
+            if success:
+                return Response({
+                    'message': f'E-mail de vérification renvoyé à {user.email}'
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'message': 'Erreur lors de l\'envoi de l\'e-mail de vérification.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        except Exception as e:
+            logger.error(f"Error resending verification email: {e}")
+            return Response({
+                'message': 'Une erreur s\'est produite.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class UserVerificationStatusView(APIView):
+    """Get verification status for users"""
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrEmployee]
+
+    def get(self, request):
+        users = CustomUser.objects.all().order_by('role', 'username')
+
+        verification_data = []
+        for user in users:
+            verification_data.append({
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'cin': user.cin,
+                'role': user.role,
+                'isActive': user.isActive,
+                'isVerified': user.isVerified,
+                'needs_verification': user.needs_email_verification() if hasattr(user, 'needs_email_verification') else False,
+                'can_login': user.can_login() if hasattr(user, 'can_login') else user.isActive and user.isVerified,
+                'verification_tokens_count': EmailVerificationToken.objects.filter(user=user, is_used=False).count()
+            })
+
+        return Response({
+            'users': verification_data,
+            'summary': {
+                'total_users': len(verification_data),
+                'verified_users': sum(1 for user in verification_data if user['isVerified']),
+                'unverified_users': sum(1 for user in verification_data if not user['isVerified']),
+                'admin_users': sum(1 for user in verification_data if user['role'] == 'ADMIN'),
+                'client_users': sum(1 for user in verification_data if user['role'] == 'CLIENT'),
+            }
+        })
+
+
+class BulkVerifyUsersView(APIView):
+    """Bulk verify multiple users"""
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+
+    def post(self, request):
+        user_ids = request.data.get('user_ids', [])
+
+        if not user_ids:
+            return Response({
+                'error': 'user_ids list is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            users = CustomUser.objects.filter(id__in=user_ids)
+            updated_count = 0
+
+            for user in users:
+                if not user.isVerified:
+                    user.isVerified = True
+                    user.save(update_fields=['isVerified'])
+                    updated_count += 1
+
+                    # Clear cache
+                    SimpleCacheManager.delete_cache('user_profile', user.id)
+                    SimpleCacheManager.delete_cache('user_by_id', user.id)
+                    if hasattr(user, 'cin'):
+                        SimpleCacheManager.delete_cache(
+                            'user_by_cin', user.cin)
+                        if user.role == 'CLIENT':
+                            SimpleCacheManager.delete_cache(
+                                'client_by_cin', user.cin)
+
+            # Clear users list cache
+            SimpleCacheManager.delete_cache('users_list', 'all')
+
+            return Response({
+                'message': f'Successfully verified {updated_count} users',
+                'updated_count': updated_count,
+                'total_requested': len(user_ids)
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error in bulk verify users: {e}")
+            return Response({
+                'error': 'An error occurred during bulk verification'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

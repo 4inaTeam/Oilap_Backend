@@ -4,8 +4,10 @@ from django.core.validators import RegexValidator
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from datetime import timedelta
 import re
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -173,8 +175,13 @@ class CustomUser(AbstractUser):
     )
 
     isActive = models.BooleanField(default=True)
+    isVerified = models.BooleanField(
+        default=False,
+        verbose_name=_("Email Verified"),
+        help_text=_("Whether the user has verified their email address")
+    )
 
-    fcm_token = models.TextField(  
+    fcm_token = models.TextField(
         blank=True,
         null=True,
         verbose_name=_("FCM Device Token"),
@@ -421,3 +428,38 @@ class Client(models.Model):
 
     def __str__(self):
         return self.custom_user.email
+
+
+class EmailVerificationToken(models.Model):
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='verification_tokens'
+    )
+    token = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Email Verification Token"
+        verbose_name_plural = "Email Verification Tokens"
+
+    def save(self, *args, **kwargs):
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timedelta(hours=24)  # Token expires in 24 hours
+        super().save(*args, **kwargs)
+
+    def is_valid(self):
+        """Check if token is still valid and not used"""
+        return (
+            not self.is_used and
+            timezone.now() < self.expires_at
+        )
+
+    def __str__(self):
+        return f"Verification token for {self.user.username}"

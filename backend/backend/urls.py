@@ -5,7 +5,7 @@ from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenRefreshView
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
-from users.views import EmailCINAuthView
+from users.views import EmailCINAuthView, EmailVerificationView, ResendVerificationEmailView
 from django.views.static import serve
 from django.urls import re_path
 import os
@@ -24,6 +24,11 @@ urlpatterns = [
     path('api/auth/', include([
         path('login/', EmailCINAuthView.as_view(), name='token_obtain_pair'),
         path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+        # Add email verification endpoints here
+        path('verify-email/<uuid:token>/',
+             EmailVerificationView.as_view(), name='verify_email'),
+        path('resend-verification/<int:user_id>/',
+             ResendVerificationEmailView.as_view(), name='resend_verification'),
     ])),
 
     path('api/tickets/', include('tickets.urls')),

@@ -13,7 +13,9 @@ from .views import (
     ClientUpdateView,
     SearchUserByCIN,
     EmployeeAccountantUpdateView,
-    GetUserById
+    GetUserById,
+    EmailVerificationView,
+    ResendVerificationEmailView,
 )
 
 urlpatterns = [
@@ -38,4 +40,8 @@ urlpatterns = [
     path('get/<int:user_id>/', GetUserById.as_view(), name='get-user-by-id'),
 
     path('total-clients/', TotalClientsView.as_view(), name='total-clients'),
+    path('verify-email/<uuid:token>/',
+         EmailVerificationView.as_view(), name='verify_email'),
+    path('resend-verification/<int:user_id>/',
+         ResendVerificationEmailView.as_view(), name='resend_verification'),
 ]

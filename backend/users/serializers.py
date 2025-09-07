@@ -18,18 +18,19 @@ def validate_cin_format(cin):
     """
     if not cin:
         raise serializers.ValidationError("CIN is required")
-    
+
     # Convert to string in case it's passed as integer
     cin_str = str(cin)
-    
+
     # Check if it's exactly 8 digits
     if not cin_str.isdigit() or len(cin_str) != 8:
         raise serializers.ValidationError("CIN must be exactly 8 digits")
-    
+
     # Check for eight consecutive identical digits
     if len(set(cin_str)) == 1:
-        raise serializers.ValidationError("CIN cannot contain eight identical digits")
-    
+        raise serializers.ValidationError(
+            "CIN cannot contain eight identical digits")
+
     return cin_str
 
 
@@ -127,9 +128,14 @@ class EmailCINAuthSerializer(serializers.Serializer):
                 'Invalid identifier format. Use a valid email or 8-digit CIN.')
 
         if user and user.check_password(password):
-            if not user.is_active:
+            if not user.is_active or not user.isActive:
                 raise exceptions.AuthenticationFailed(
                     'User account is disabled.')
+
+            # Check email verification (skip for admins/superusers)
+            if not user.isVerified and not user.is_superuser and user.role != 'ADMIN':
+                raise exceptions.AuthenticationFailed(
+                    'Please verify your email address before logging in. Check your email for verification instructions.')
 
             refresh = RefreshToken.for_user(user)
             return {
@@ -146,14 +152,15 @@ class CustomUserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'role',
             'password', 'profile_photo', 'isActive',
-            'cin', 'tel', 'ville'
+            'cin', 'tel', 'ville', 'isVerified'
         ]
         extra_kwargs = {
             'password': {'write_only': True},
             'role': {'read_only': True},
             'cin': {'required': True},
             'tel': {'required': True},
-            'ville': {'required': False},  # Optional, will use default
+            'ville': {'required': False},
+            'isVerified': {'read_only': True},
         }
 
     def validate_email(self, value):
@@ -174,7 +181,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
         if value:
             # Apply format validation
             value = validate_cin_format(value)
-            
+
             # Check if CIN already exists
             if CustomUser.objects.filter(cin=value).exists():
                 raise serializers.ValidationError("CIN already exists")
@@ -205,10 +212,11 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ['id', 'username', 'email', 'role',
-                  'password', 'cin', 'tel', 'ville']
+                  'password', 'cin', 'tel', 'ville', 'isVerified']
         extra_kwargs = {
             'password': {'write_only': True},
             'ville': {'required': False},
+            'isVerified': {'required': False},
         }
 
     def validate_email(self, value):
@@ -237,7 +245,7 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
         if value:
             # Apply format validation
             value = validate_cin_format(value)
-            
+
             # Check if CIN already exists
             if CustomUser.objects.filter(cin=value).exists():
                 raise serializers.ValidationError("CIN already exists")
@@ -263,7 +271,7 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
 class UserActiveStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'isActive']
+        fields = ['id', 'username', 'isActive', 'isVerified']
 
 
 class ClientUpdateSerializer(serializers.ModelSerializer):
@@ -302,7 +310,7 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
         if value:
             # Apply format validation
             value = validate_cin_format(value)
-            
+
             # Check if CIN already exists (excluding current instance)
             queryset = CustomUser.objects.filter(cin=value)
             if self.instance:
