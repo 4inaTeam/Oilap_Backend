@@ -1203,3 +1203,11 @@ INFO 2025-09-07 10:39:27,787 views 7540 5696 Cache set for bill list: user 33
 INFO 2025-09-07 10:39:40,281 views 7540 17556 Cache set for bill list: user 33
 INFO 2025-09-07 10:39:49,064 views 7540 17556 Cache hit for bill list: user 33
 INFO 2025-09-07 12:29:33,929 views 7540 11764 Cache set for bill statistics: user 1
+INFO 2025-09-07 12:31:29,154 views 18164 16260 Cache set for bill list: user 33
+INFO 2025-09-07 12:31:29,550 views 18164 17252 Cache set for bill statistics: user 33
+INFO 2025-09-07 23:48:39,017 views 80 16748 Cache set for bill statistics: user 1
+INFO 2025-09-07 23:48:53,409 views 80 16468 Cache set for bill statistics: user 1
+INFO 2025-09-07 23:49:01,876 views 80 16632 Cache hit for bill statistics: user 1
+INFO 2025-09-07 23:49:03,227 views 80 16468 Cache hit for bill statistics: user 1
+INFO 2025-09-07 23:49:53,776 views 80 16468 Cache hit for bill statistics: user 1
+INFO 2025-09-08 00:13:19,456 views 3908 11864 Cache set for bill statistics: user 1
