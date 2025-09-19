@@ -567,9 +567,6 @@ class UserReactivateView(APIView):
             'user': serializer.data
         }, status=status.HTTP_200_OK)
 
-
-# Email Verification Views
-
 class EmailVerificationView(APIView):
     permission_classes = [AllowAny]
 
@@ -583,13 +580,13 @@ class EmailVerificationView(APIView):
             # Check if token is valid
             if not verification_token.is_valid():
                 if verification_token.is_used:
-                    return render(request, 'verification_result.html', {
+                    return render(request, 'emails/verification_result.html', {
                         'success': False,
                         'message': 'Ce lien de vérification a déjà été utilisé.',
                         'title': 'Lien déjà utilisé'
                     })
                 else:
-                    return render(request, 'verification_result.html', {
+                    return render(request, 'emails/verification_result.html', {
                         'success': False,
                         'message': 'Ce lien de vérification a expiré. Contactez l\'administrateur pour obtenir un nouveau lien.',
                         'title': 'Lien expiré'
@@ -614,7 +611,7 @@ class EmailVerificationView(APIView):
 
             logger.info(f"Email verified successfully for user: {user.id}")
 
-            return render(request, 'verification_result.html', {
+            return render(request, 'emails/verification_result.html', {
                 'success': True,
                 'message': f'Félicitations {user.username} ! Votre adresse e-mail a été vérifiée avec succès. Vous pouvez maintenant vous connecter à votre compte.',
                 'title': 'Vérification réussie',
@@ -623,7 +620,7 @@ class EmailVerificationView(APIView):
 
         except Exception as e:
             logger.error(f"Email verification error: {e}")
-            return render(request, 'verification_result.html', {
+            return render(request, 'emails/verification_result.html', {
                 'success': False,
                 'message': 'Une erreur s\'est produite lors de la vérification. Veuillez réessayer ou contacter le support.',
                 'title': 'Erreur de vérification'
